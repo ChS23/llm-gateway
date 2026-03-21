@@ -58,6 +58,9 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.147.0
+    environment:
+      LANGFUSE_BASEURL: http://langfuse:3000
+      LANGFUSE_AUTH: ${LANGFUSE_AUTH:-}
     volumes:
       - ./config/otel-collector.yaml:/etc/otelcol/config.yaml:ro
     command: ["--config", "/etc/otelcol/config.yaml"]
@@ -76,6 +79,7 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafdata:/var/lib/grafana
 
   langfuse:
