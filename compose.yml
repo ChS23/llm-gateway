@@ -1,0 +1,95 @@
+services:
+  gateway:
+    build:
+      context: .
+      target: gateway
+    environment:
+      CONFIG_PATH: /etc/gateway/gateway.toml
+      RUST_LOG: info
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./config/gateway.toml:/etc/gateway/gateway.toml:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mock-provider-1:
+    build:
+      context: .
+      target: mock-provider
+    environment:
+      PORT: "9001"
+      RUST_LOG: info
+
+  mock-provider-2:
+    build:
+      context: .
+      target: mock-provider
+    environment:
+      PORT: "9002"
+      RUST_LOG: info
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: llm_gateway
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:8-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.147.0
+    volumes:
+      - ./config/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    command: ["--config", "/etc/otelcol/config.yaml"]
+
+  prometheus:
+    image: prom/prometheus:v3.10.0
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+
+  grafana:
+    image: grafana/grafana:12.4.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafdata:/var/lib/grafana
+
+  langfuse:
+    image: langfuse/langfuse:3-latest
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/llm_gateway
+      NEXTAUTH_SECRET: secret-for-dev
+      NEXTAUTH_URL: http://localhost:3001
+      SALT: salt-for-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  promdata:
+  grafdata:

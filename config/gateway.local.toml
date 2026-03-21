@@ -1,0 +1,32 @@
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[database]
+url = "postgres://postgres:postgres@127.0.0.1:5432/llm_gateway"
+
+[redis]
+url = "redis://127.0.0.1:6379"
+
+[telemetry]
+otlp_endpoint = "http://127.0.0.1:4317"
+
+[auth]
+
+[routing]
+
+[circuit_breaker]
+
+[guardrails]
+
+[[providers]]
+name = "mock-fast"
+type = "mock"
+base_url = "http://127.0.0.1:9001"
+models = ["mock-fast"]
+
+[[providers]]
+name = "mock-slow"
+type = "mock"
+base_url = "http://127.0.0.1:9002"
+models = ["mock-slow"]

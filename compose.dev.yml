@@ -1,0 +1,43 @@
+services:
+  gateway:
+    build:
+      context: .
+      target: gateway
+    profiles: [build]
+
+  mock-provider-1:
+    build:
+      context: .
+      target: mock-provider
+    profiles: [build]
+
+  mock-provider-2:
+    build:
+      context: .
+      target: mock-provider
+    profiles: [build]
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  otel-collector:
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+  prometheus:
+    ports:
+      - "9090:9090"
+
+  grafana:
+    ports:
+      - "3000:3000"
+
+  langfuse:
+    ports:
+      - "3001:3000"

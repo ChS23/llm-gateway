@@ -1,0 +1,65 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[database]
+url = "postgres://postgres:postgres@postgres:5432/llm_gateway"
+max_connections = 20
+
+[redis]
+url = "redis://redis:6379"
+
+[telemetry]
+otlp_endpoint = "http://otel-collector:4317"
+service_name = "llm-gateway"
+
+[auth]
+key_prefix = "sk-gw"
+hash_algorithm = "sha256"
+
+[routing]
+default_strategy = "round-robin"
+
+[circuit_breaker]
+failure_threshold = 5
+cooldown_seconds = 30
+half_open_max_requests = 3
+
+[guardrails]
+enable_injection_filter = true
+enable_secret_scanner = true
+max_request_size_bytes = 1_048_576
+
+[[providers]]
+name = "openai"
+type = "openai"
+base_url = "https://api.openai.com/v1"
+api_key = "${OPENAI_API_KEY:-}"
+models = ["gpt-4o", "gpt-4o-mini"]
+cost_per_input_token = 0.0000025
+cost_per_output_token = 0.00001
+priority = 1
+
+[[providers]]
+name = "anthropic"
+type = "anthropic"
+base_url = "https://api.anthropic.com/v1"
+api_key = "${ANTHROPIC_API_KEY:-}"
+models = ["claude-sonnet-4-20250514"]
+cost_per_input_token = 0.000003
+cost_per_output_token = 0.000015
+priority = 1
+
+[[providers]]
+name = "mock-fast"
+type = "mock"
+base_url = "http://mock-provider-1:9001"
+models = ["mock-fast"]
+priority = 0
+
+[[providers]]
+name = "mock-slow"
+type = "mock"
+base_url = "http://mock-provider-2:9002"
+models = ["mock-slow"]
+priority = 0
