@@ -36,7 +36,3 @@ services:
   grafana:
     network_mode: host
     ports: !override []
-
-  langfuse:
-    network_mode: host
-    ports: !override []

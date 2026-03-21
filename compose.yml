@@ -59,7 +59,7 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.147.0
     environment:
-      LANGFUSE_BASEURL: http://langfuse:3000
+      LANGFUSE_BASEURL: ${LANGFUSE_BASEURL:-https://cloud.langfuse.com}
       LANGFUSE_AUTH: ${LANGFUSE_AUTH:-}
     volumes:
       - ./config/otel-collector.yaml:/etc/otelcol/config.yaml:ro
@@ -82,16 +82,6 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafdata:/var/lib/grafana
 
-  langfuse:
-    image: langfuse/langfuse:3-latest
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/llm_gateway
-      NEXTAUTH_SECRET: secret-for-dev
-      NEXTAUTH_URL: http://localhost:3001
-      SALT: salt-for-dev
-    depends_on:
-      postgres:
-        condition: service_healthy
 
 volumes:
   pgdata:

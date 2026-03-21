@@ -37,7 +37,3 @@ services:
   grafana:
     ports:
       - "3000:3000"
-
-  langfuse:
-    ports:
-      - "3001:3000"
