@@ -25,6 +25,10 @@ use crate::types::{ChatRequest, GatewayError};
     gen_ai.response.id,
     gen_ai.input.messages,
     gen_ai.output.messages,
+    // Langfuse-specific: maps to Input/Output fields in Langfuse UI
+    langfuse.observation.input,
+    langfuse.observation.output,
+    langfuse.observation.type = "generation",
 ))]
 pub async fn chat_completions(
     State(state): State<SharedState>,
@@ -64,6 +68,7 @@ pub async fn chat_completions(
 
     if let Ok(input_json) = serde_json::to_string(&request.messages) {
         span.record("gen_ai.input.messages", input_json.as_str());
+        span.record("langfuse.observation.input", input_json.as_str());
     }
 
     let result = execute_request(&state, &router, provider, &request).await;
@@ -165,7 +170,6 @@ async fn execute_request(
         span.record("gen_ai.response.model", resp.model.as_str());
         span.record("gen_ai.response.id", resp.id.as_str());
 
-        // Record output content
         if let Some(content) = resp
             .choices
             .first()
@@ -173,6 +177,7 @@ async fn execute_request(
             .and_then(|m| m.content.as_deref())
         {
             span.record("gen_ai.output.messages", content);
+            span.record("langfuse.observation.output", content);
         }
         if let Some(reason) = resp
             .choices
