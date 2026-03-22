@@ -3,18 +3,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
     pub model: String,
-    pub messages: Vec<ChatMessage>,
+    pub messages: Vec<RequestMessage>,
     #[serde(default)]
     pub stream: bool,
-    // Пробрасываем остальные поля as-is (temperature, max_tokens, etc.)
-    // `flatten` собирает все неизвестные ключи в HashMap — gateway их не трогает,
-    // просто форвардит провайдеру. Так не нужно руками описывать каждый optional field.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Request message — role обязателен по OpenAI spec
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
+pub struct RequestMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// Response/delta message — всё optional (SSE chunks отправляют частичные данные)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeltaMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,8 +41,10 @@ pub struct ChatResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Choice {
     pub index: u32,
-    pub message: Option<ChatMessage>,
-    pub delta: Option<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<DeltaMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<DeltaMessage>,
     pub finish_reason: Option<String>,
 }
 

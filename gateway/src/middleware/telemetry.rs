@@ -1,4 +1,4 @@
-use opentelemetry::metrics::{Counter, Histogram, Meter};
+use opentelemetry::metrics::{Counter, Histogram, Meter, UpDownCounter};
 use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::{MetricExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
@@ -6,9 +6,8 @@ use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 
 use crate::config::TelemetryConfig;
 
-/// Все метрики gateway в одном месте.
-/// Clone-safe — внутри Arc, можно шарить между handlers.
 #[derive(Clone)]
+#[allow(dead_code)] // Fields used as more metrics are wired up
 pub struct Metrics {
     pub requests_total: Counter<u64>,
     pub request_duration: Histogram<f64>,
@@ -16,7 +15,7 @@ pub struct Metrics {
     pub tpot: Histogram<f64>,
     pub token_usage: Counter<u64>,
     pub request_cost: Counter<f64>,
-    pub provider_healthy: Counter<u64>,
+    pub provider_healthy: UpDownCounter<i64>,
 }
 
 impl Metrics {
@@ -51,16 +50,16 @@ impl Metrics {
                 .with_unit("USD")
                 .build(),
             provider_healthy: meter
-                .u64_counter("llm_gateway.provider.healthy")
-                .with_description("Provider health status")
+                .i64_up_down_counter("llm_gateway.provider.healthy")
+                .with_description("Provider health status (1 = healthy, -1 = unhealthy)")
                 .build(),
         }
     }
 
     pub fn record_request(&self, provider: &str, model: &str, status: u16, duration_secs: f64) {
         let attrs = [
-            KeyValue::new("provider", provider.to_string()),
-            KeyValue::new("model", model.to_string()),
+            KeyValue::new("provider", provider.to_owned()),
+            KeyValue::new("model", model.to_owned()),
             KeyValue::new("status", i64::from(status)),
         ];
         self.requests_total.add(1, &attrs);
@@ -69,30 +68,32 @@ impl Metrics {
 
     pub fn record_ttft(&self, provider: &str, model: &str, seconds: f64) {
         let attrs = [
-            KeyValue::new("provider", provider.to_string()),
-            KeyValue::new("model", model.to_string()),
+            KeyValue::new("provider", provider.to_owned()),
+            KeyValue::new("model", model.to_owned()),
         ];
         self.ttft.record(seconds, &attrs);
     }
 
     pub fn record_tpot(&self, provider: &str, model: &str, seconds: f64) {
         let attrs = [
-            KeyValue::new("provider", provider.to_string()),
-            KeyValue::new("model", model.to_string()),
+            KeyValue::new("provider", provider.to_owned()),
+            KeyValue::new("model", model.to_owned()),
         ];
         self.tpot.record(seconds, &attrs);
     }
 
+    #[allow(dead_code)]
     pub fn record_tokens(&self, model: &str, direction: &str, count: u64) {
         let attrs = [
-            KeyValue::new("model", model.to_string()),
-            KeyValue::new("direction", direction.to_string()),
+            KeyValue::new("model", model.to_owned()),
+            KeyValue::new("direction", direction.to_owned()),
         ];
         self.token_usage.add(count, &attrs);
     }
 
+    #[allow(dead_code)]
     pub fn record_cost(&self, model: &str, cost: f64) {
-        let attrs = [KeyValue::new("model", model.to_string())];
+        let attrs = [KeyValue::new("model", model.to_owned())];
         self.request_cost.add(cost, &attrs);
     }
 }

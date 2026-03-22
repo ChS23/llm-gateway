@@ -1,7 +1,10 @@
-use serde::Deserialize;
+use std::fmt;
 use std::path::Path;
 
-#[derive(Debug, Deserialize)]
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+#[allow(dead_code)] // Fields used in Phase 2/3
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
@@ -15,6 +18,20 @@ pub struct Config {
     pub providers: Vec<ProviderConfig>,
 }
 
+// Custom Debug — не выводим providers целиком (там api_key)
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("server", &self.server)
+            .field("routing", &self.routing)
+            .field(
+                "providers",
+                &format_args!("[{} providers]", self.providers.len()),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
     #[serde(default = "default_host")]
@@ -24,6 +41,7 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct DatabaseConfig {
     pub url: String,
     #[serde(default = "default_max_connections")]
@@ -31,6 +49,7 @@ pub struct DatabaseConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct RedisConfig {
     pub url: String,
 }
@@ -43,6 +62,7 @@ pub struct TelemetryConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AuthConfig {
     #[serde(default = "default_key_prefix")]
     pub key_prefix: String,
@@ -66,6 +86,7 @@ pub enum RoutingStrategy {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct CircuitBreakerConfig {
     #[serde(default = "default_failure_threshold")]
     pub failure_threshold: u32,
@@ -76,6 +97,7 @@ pub struct CircuitBreakerConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct GuardrailsConfig {
     #[serde(default = "default_true")]
     pub enable_injection_filter: bool,
@@ -85,7 +107,8 @@ pub struct GuardrailsConfig {
     pub max_request_size_bytes: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct ProviderConfig {
     pub name: String,
     #[serde(rename = "type")]
@@ -102,6 +125,20 @@ pub struct ProviderConfig {
     pub priority: i32,
     #[serde(default = "default_weight")]
     pub weight: u32,
+}
+
+// Redact api_key in Debug output
+impl fmt::Debug for ProviderConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProviderConfig")
+            .field("name", &self.name)
+            .field("type", &self.provider_type)
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("models", &self.models)
+            .field("weight", &self.weight)
+            .finish_non_exhaustive()
+    }
 }
 
 fn default_host() -> String {
@@ -147,15 +184,15 @@ fn default_weight() -> u32 {
 impl Config {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
-        let resolved = resolve_env_vars(&content);
+        let resolved = resolve_env_vars(&content)?;
         let config: Config = toml::from_str(&resolved)?;
         Ok(config)
     }
 }
 
-/// `${VAR_NAME}` → значение из env, паникует если переменная не задана.
+/// `${VAR_NAME}` → значение из env, ошибка если переменная не задана.
 /// `${VAR_NAME:-default}` → значение из env, или default если не задана.
-fn resolve_env_vars(input: &str) -> String {
+fn resolve_env_vars(input: &str) -> Result<String, String> {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
 
@@ -163,17 +200,22 @@ fn resolve_env_vars(input: &str) -> String {
         if ch == '$' && chars.peek() == Some(&'{') {
             chars.next(); // skip '{'
             let mut var_expr = String::new();
+            let mut found_close = false;
             for ch in chars.by_ref() {
                 if ch == '}' {
+                    found_close = true;
                     break;
                 }
                 var_expr.push(ch);
+            }
+            if !found_close {
+                return Err(format!("unclosed ${{}} expression: ${{{var_expr}"));
             }
             let value = if let Some((name, default)) = var_expr.split_once(":-") {
                 std::env::var(name).unwrap_or_else(|_| default.to_string())
             } else {
                 std::env::var(&var_expr)
-                    .unwrap_or_else(|_| panic!("env var {var_expr} is required but not set"))
+                    .map_err(|_| format!("required env var '{var_expr}' is not set"))?
             };
             result.push_str(&value);
         } else {
@@ -181,7 +223,7 @@ fn resolve_env_vars(input: &str) -> String {
         }
     }
 
-    result
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -193,9 +235,26 @@ mod tests {
     fn test_resolve_env_vars() {
         // SAFETY: тесты запускаются до создания доп. потоков в этом процессе
         unsafe { std::env::set_var("TEST_GW_VAR", "hello") };
-        assert_eq!(resolve_env_vars("${TEST_GW_VAR}"), "hello");
-        assert_eq!(resolve_env_vars("${MISSING_VAR:-fallback}"), "fallback");
-        assert_eq!(resolve_env_vars("no vars here"), "no vars here");
+        assert_eq!(resolve_env_vars("${TEST_GW_VAR}").unwrap(), "hello");
+        assert_eq!(
+            resolve_env_vars("${MISSING_VAR:-fallback}").unwrap(),
+            "fallback"
+        );
+        assert_eq!(resolve_env_vars("no vars here").unwrap(), "no vars here");
+    }
+
+    #[test]
+    fn test_resolve_missing_required_var() {
+        let result = resolve_env_vars("${DEFINITELY_MISSING_VAR_XYZ}");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("DEFINITELY_MISSING_VAR_XYZ"));
+    }
+
+    #[test]
+    fn test_resolve_unclosed_expression() {
+        let result = resolve_env_vars("${UNCLOSED");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unclosed"));
     }
 
     #[test]

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod config;
 mod middleware;
 mod providers;
@@ -12,10 +10,12 @@ mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::{
     Router,
     routing::{get, post},
 };
+use tokio::signal;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
@@ -36,6 +36,7 @@ async fn main() {
 
     let config = Config::load(&config_path).expect("failed to load config");
     let addr = format!("{}:{}", config.server.host, config.server.port);
+    let body_limit = config.guardrails.max_request_size_bytes;
 
     let metrics = init_metrics(&config.telemetry);
     let providers = build_providers(&config);
@@ -63,6 +64,7 @@ async fn main() {
     let app = Router::new()
         .route("/v1/chat/completions", post(routes::chat::chat_completions))
         .route("/health", get(routes::health::health))
+        .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -71,7 +73,34 @@ async fn main() {
 
     tracing::info!("gateway listening on {addr}");
 
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("server error");
+
+    tracing::info!("shutdown complete");
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c().await.expect("failed to listen for ctrl+c");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to listen for SIGTERM")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => tracing::info!("received ctrl+c"),
+        () = terminate => tracing::info!("received SIGTERM"),
+    }
 }
 
 fn build_providers(config: &Config) -> Vec<Box<dyn providers::LlmProvider>> {

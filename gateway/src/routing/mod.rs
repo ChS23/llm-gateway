@@ -9,10 +9,14 @@ struct Backend {
     weight: u32,
 }
 
-pub struct Router {
-    model_backends: HashMap<String, Vec<Backend>>,
-    providers: Vec<Box<dyn LlmProvider>>,
+struct ModelBackends {
+    backends: Vec<Backend>,
     counter: AtomicUsize,
+}
+
+pub struct Router {
+    model_map: HashMap<String, ModelBackends>,
+    providers: Vec<Box<dyn LlmProvider>>,
     strategy: RoutingStrategy,
 }
 
@@ -22,75 +26,82 @@ impl Router {
         weights: &HashMap<String, u32>,
         strategy: RoutingStrategy,
     ) -> Self {
-        let mut model_backends: HashMap<String, Vec<Backend>> = HashMap::new();
+        let mut model_map: HashMap<String, Vec<Backend>> = HashMap::new();
 
         for (idx, provider) in providers.iter().enumerate() {
             let weight = weights.get(provider.name()).copied().unwrap_or(1);
             for model in provider.models() {
-                model_backends
-                    .entry(model.clone())
-                    .or_default()
-                    .push(Backend {
-                        provider_idx: idx,
-                        weight,
-                    });
+                model_map.entry(model.clone()).or_default().push(Backend {
+                    provider_idx: idx,
+                    weight,
+                });
             }
         }
 
+        let model_map = model_map
+            .into_iter()
+            .map(|(model, backends)| {
+                (
+                    model,
+                    ModelBackends {
+                        backends,
+                        counter: AtomicUsize::new(0),
+                    },
+                )
+            })
+            .collect();
+
         Self {
-            model_backends,
+            model_map,
             providers,
-            counter: AtomicUsize::new(0),
             strategy,
         }
     }
 
     pub fn resolve(&self, model: &str) -> Option<&dyn LlmProvider> {
-        let backends = self.model_backends.get(model)?;
-        if backends.is_empty() {
+        let entry = self.model_map.get(model)?;
+        if entry.backends.is_empty() {
             return None;
         }
 
         let idx = match self.strategy {
-            RoutingStrategy::RoundRobin => self.round_robin(backends),
-            RoutingStrategy::Weighted => self.weighted(backends),
-            // Latency и HealthAware будут в Phase 2 (нужен Redis)
-            RoutingStrategy::Latency | RoutingStrategy::HealthAware => self.round_robin(backends),
+            RoutingStrategy::RoundRobin => Self::round_robin(entry),
+            RoutingStrategy::Weighted => Self::weighted(entry),
+            RoutingStrategy::Latency | RoutingStrategy::HealthAware => Self::round_robin(entry),
         };
 
         Some(&*self.providers[idx])
     }
 
-    fn round_robin(&self, backends: &[Backend]) -> usize {
-        let counter = self.counter.fetch_add(1, Ordering::Relaxed);
-        backends[counter % backends.len()].provider_idx
+    fn round_robin(entry: &ModelBackends) -> usize {
+        let counter = entry.counter.fetch_add(1, Ordering::Relaxed);
+        entry.backends[counter % entry.backends.len()].provider_idx
     }
 
-    /// Weighted round-robin через cumulative weights.
-    /// Пример: weights [3, 1, 1] → cumulative [3, 4, 5]
-    /// counter % 5: 0,1,2 → provider 0; 3 → provider 1; 4 → provider 2
-    fn weighted(&self, backends: &[Backend]) -> usize {
-        let total: u32 = backends.iter().map(|b| b.weight).sum();
+    fn weighted(entry: &ModelBackends) -> usize {
+        let total: usize = entry.backends.iter().map(|b| b.weight as usize).sum();
         if total == 0 {
-            return backends[0].provider_idx;
+            return entry.backends[0].provider_idx;
         }
 
-        let counter = self.counter.fetch_add(1, Ordering::Relaxed);
-        let slot = (counter as u32) % total;
+        let counter = entry.counter.fetch_add(1, Ordering::Relaxed);
+        let slot = counter % total;
 
-        let mut cumulative = 0;
-        for backend in backends {
-            cumulative += backend.weight;
+        let mut cumulative = 0usize;
+        for backend in &entry.backends {
+            cumulative += backend.weight as usize;
             if slot < cumulative {
                 return backend.provider_idx;
             }
         }
 
-        backends.last().unwrap().provider_idx
+        entry.backends.last().unwrap().provider_idx
     }
 
     pub fn available_models(&self) -> Vec<&str> {
-        self.model_backends.keys().map(|s| s.as_str()).collect()
+        let mut models: Vec<&str> = self.model_map.keys().map(|s| s.as_str()).collect();
+        models.sort_unstable();
+        models
     }
 }
 
@@ -181,8 +192,17 @@ mod tests {
             *counts.entry(name).or_insert(0) += 1;
         }
 
-        // 3:1 ratio → "a" should get 75, "b" should get 25
         assert_eq!(counts["a"], 75);
         assert_eq!(counts["b"], 25);
+    }
+
+    #[test]
+    fn test_available_models_sorted() {
+        let providers: Vec<Box<dyn LlmProvider>> = vec![Box::new(FakeProvider {
+            name: "x".into(),
+            models: vec!["z-model".into(), "a-model".into()],
+        })];
+        let router = Router::new(providers, &HashMap::new(), RoutingStrategy::RoundRobin);
+        assert_eq!(router.available_models(), vec!["a-model", "z-model"]);
     }
 }

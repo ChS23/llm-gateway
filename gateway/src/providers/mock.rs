@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use super::{LlmProvider, ProviderError};
 use crate::types::{ChatRequest, ChatResponse};
@@ -13,16 +14,39 @@ pub struct MockProvider {
 
 impl MockProvider {
     pub fn new(name: String, base_url: String, models: Vec<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("failed to build HTTP client");
+
         Self {
             name,
             base_url,
             models,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
     fn url(&self) -> String {
         format!("{}/v1/chat/completions", self.base_url)
+    }
+}
+
+fn map_send_err(e: reqwest::Error) -> ProviderError {
+    ProviderError {
+        status: 502,
+        message: format!("request failed: {e}"),
+        retryable: true,
+    }
+}
+
+fn check_status(resp: &reqwest::Response) -> Option<(u16, bool)> {
+    let status = resp.status().as_u16();
+    if resp.status().is_success() {
+        None
+    } else {
+        Some((status, matches!(status, 429 | 500..=504)))
     }
 }
 
@@ -46,19 +70,14 @@ impl LlmProvider for MockProvider {
                 .json(request)
                 .send()
                 .await
-                .map_err(|e| ProviderError {
-                    status: 502,
-                    message: format!("request failed: {e}"),
-                    retryable: true,
-                })?;
+                .map_err(map_send_err)?;
 
-            let status = resp.status().as_u16();
-            if !resp.status().is_success() {
+            if let Some((status, retryable)) = check_status(&resp) {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(ProviderError {
                     status,
                     message: body,
-                    retryable: matches!(status, 429 | 500..=504),
+                    retryable,
                 });
             }
 
@@ -83,19 +102,14 @@ impl LlmProvider for MockProvider {
                 .json(request)
                 .send()
                 .await
-                .map_err(|e| ProviderError {
-                    status: 502,
-                    message: format!("request failed: {e}"),
-                    retryable: true,
-                })?;
+                .map_err(map_send_err)?;
 
-            let status = resp.status().as_u16();
-            if !resp.status().is_success() {
+            if let Some((status, retryable)) = check_status(&resp) {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(ProviderError {
                     status,
                     message: body,
-                    retryable: matches!(status, 429 | 500..=504),
+                    retryable,
                 });
             }
 

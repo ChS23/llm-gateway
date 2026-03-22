@@ -24,6 +24,7 @@ pub trait LlmProvider: Send + Sync {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // retryable used in Phase 2 failover
 pub struct ProviderError {
     pub status: u16,
     pub message: String,
