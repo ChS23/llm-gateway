@@ -19,6 +19,12 @@ use crate::types::{ChatRequest, GatewayError};
     gen_ai.usage.output_tokens,
     gen_ai.response.finish_reasons,
     gen_ai.request.streaming,
+    gen_ai.request.temperature,
+    gen_ai.request.max_tokens,
+    gen_ai.request.top_p,
+    gen_ai.response.id,
+    gen_ai.input.messages,
+    gen_ai.output.messages,
 ))]
 pub async fn chat_completions(
     State(state): State<SharedState>,
@@ -44,6 +50,21 @@ pub async fn chat_completions(
     span.record("gen_ai.request.model", request.model.as_str());
     span.record("gen_ai.system", provider.name());
     span.record("gen_ai.request.streaming", request.stream);
+
+    // Record request params from extra fields
+    if let Some(t) = request.extra.get("temperature").and_then(|v| v.as_f64()) {
+        span.record("gen_ai.request.temperature", t);
+    }
+    if let Some(m) = request.extra.get("max_tokens").and_then(|v| v.as_i64()) {
+        span.record("gen_ai.request.max_tokens", m);
+    }
+    if let Some(p) = request.extra.get("top_p").and_then(|v| v.as_f64()) {
+        span.record("gen_ai.request.top_p", p);
+    }
+
+    if let Ok(input_json) = serde_json::to_string(&request.messages) {
+        span.record("gen_ai.input.messages", input_json.as_str());
+    }
 
     let result = execute_request(&state, &router, provider, &request).await;
 
@@ -142,6 +163,17 @@ async fn execute_request(
         // GenAI trace attributes for Langfuse
         let span = tracing::Span::current();
         span.record("gen_ai.response.model", resp.model.as_str());
+        span.record("gen_ai.response.id", resp.id.as_str());
+
+        // Record output content
+        if let Some(content) = resp
+            .choices
+            .first()
+            .and_then(|c| c.message.as_ref())
+            .and_then(|m| m.content.as_deref())
+        {
+            span.record("gen_ai.output.messages", content);
+        }
         if let Some(reason) = resp
             .choices
             .first()
