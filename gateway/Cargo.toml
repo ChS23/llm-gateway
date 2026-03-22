@@ -21,6 +21,7 @@ opentelemetry-otlp.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+fred.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

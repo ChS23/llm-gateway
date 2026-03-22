@@ -57,6 +57,22 @@ async fn main() {
 
     tracing::info!("database connected, migrations applied");
 
+    // Redis for latency tracking
+    use fred::prelude::ClientLike;
+    let latency_tracker = if !config.redis.url.is_empty() {
+        let redis_config =
+            fred::prelude::Config::from_url(&config.redis.url).expect("invalid redis URL");
+        let redis = fred::prelude::Client::new(redis_config, None, None, None);
+        redis.init().await.expect("failed to connect to Redis");
+        tracing::info!("redis connected");
+        Some(crate::routing::latency::LatencyTracker::new(redis))
+    } else {
+        tracing::info!("redis not configured, latency routing disabled");
+        None
+    };
+
+    let health_tracker = crate::routing::health::HealthTracker::new(config.circuit_breaker.clone());
+
     let metrics = init_metrics(&config.telemetry);
     let providers = build_providers(&config);
 
@@ -67,7 +83,13 @@ async fn main() {
         .map(|p| (p.name.clone(), p.weight))
         .collect();
 
-    let llm_router = LlmRouter::new(providers, &weights, config.routing.default_strategy);
+    let llm_router = LlmRouter::new(
+        providers,
+        &weights,
+        config.routing.default_strategy,
+        health_tracker,
+        latency_tracker,
+    );
 
     tracing::info!(
         models = ?llm_router.available_models(),

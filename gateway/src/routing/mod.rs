@@ -1,8 +1,14 @@
+pub mod health;
+pub mod latency;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::config::RoutingStrategy;
 use crate::providers::LlmProvider;
+
+use self::health::HealthTracker;
+use self::latency::LatencyTracker;
 
 struct Backend {
     provider_idx: usize,
@@ -18,6 +24,8 @@ pub struct Router {
     model_map: HashMap<String, ModelBackends>,
     providers: Vec<Box<dyn LlmProvider>>,
     strategy: RoutingStrategy,
+    pub health: HealthTracker,
+    pub latency: Option<LatencyTracker>,
 }
 
 impl Router {
@@ -25,6 +33,8 @@ impl Router {
         providers: Vec<Box<dyn LlmProvider>>,
         weights: &HashMap<String, u32>,
         strategy: RoutingStrategy,
+        health: HealthTracker,
+        latency: Option<LatencyTracker>,
     ) -> Self {
         let mut model_map: HashMap<String, Vec<Backend>> = HashMap::new();
 
@@ -55,47 +65,104 @@ impl Router {
             model_map,
             providers,
             strategy,
+            health,
+            latency,
         }
     }
 
-    pub fn resolve(&self, model: &str) -> Option<&dyn LlmProvider> {
+    /// Resolve a provider for the given model.
+    /// Filters out unhealthy providers, then applies routing strategy.
+    pub async fn resolve(&self, model: &str) -> Option<&dyn LlmProvider> {
         let entry = self.model_map.get(model)?;
         if entry.backends.is_empty() {
             return None;
         }
 
+        // Filter to healthy backends only
+        let healthy: Vec<&Backend> = entry
+            .backends
+            .iter()
+            .filter(|b| {
+                let name = self.providers[b.provider_idx].name();
+                self.health.is_available(name)
+            })
+            .collect();
+
+        // If all are down, try all (circuit breaker might transition to half-open)
+        let candidates = if healthy.is_empty() {
+            entry.backends.iter().collect::<Vec<_>>()
+        } else {
+            healthy
+        };
+
         let idx = match self.strategy {
-            RoutingStrategy::RoundRobin => Self::round_robin(entry),
-            RoutingStrategy::Weighted => Self::weighted(entry),
-            RoutingStrategy::Latency | RoutingStrategy::HealthAware => Self::round_robin(entry),
+            RoutingStrategy::RoundRobin => self.round_robin(entry, &candidates),
+            RoutingStrategy::Weighted => self.weighted(entry, &candidates),
+            RoutingStrategy::Latency => self.latency_based(&candidates).await,
+            RoutingStrategy::HealthAware => self.round_robin(entry, &candidates),
         };
 
         Some(&*self.providers[idx])
     }
 
-    fn round_robin(entry: &ModelBackends) -> usize {
-        let counter = entry.counter.fetch_add(1, Ordering::Relaxed);
-        entry.backends[counter % entry.backends.len()].provider_idx
+    /// Get a failover provider: different from `exclude`, healthy, same model.
+    pub fn failover(&self, model: &str, exclude: &str) -> Option<&dyn LlmProvider> {
+        let entry = self.model_map.get(model)?;
+
+        entry
+            .backends
+            .iter()
+            .filter(|b| {
+                let p = &self.providers[b.provider_idx];
+                p.name() != exclude && self.health.is_available(p.name())
+            })
+            .map(|b| &*self.providers[b.provider_idx])
+            .next()
     }
 
-    fn weighted(entry: &ModelBackends) -> usize {
-        let total: usize = entry.backends.iter().map(|b| b.weight as usize).sum();
+    fn round_robin(&self, entry: &ModelBackends, candidates: &[&Backend]) -> usize {
+        let counter = entry.counter.fetch_add(1, Ordering::Relaxed);
+        candidates[counter % candidates.len()].provider_idx
+    }
+
+    fn weighted(&self, entry: &ModelBackends, candidates: &[&Backend]) -> usize {
+        let total: usize = candidates.iter().map(|b| b.weight as usize).sum();
         if total == 0 {
-            return entry.backends[0].provider_idx;
+            return candidates[0].provider_idx;
         }
 
         let counter = entry.counter.fetch_add(1, Ordering::Relaxed);
         let slot = counter % total;
 
         let mut cumulative = 0usize;
-        for backend in &entry.backends {
+        for backend in candidates {
             cumulative += backend.weight as usize;
             if slot < cumulative {
                 return backend.provider_idx;
             }
         }
 
-        entry.backends.last().unwrap().provider_idx
+        candidates.last().unwrap().provider_idx
+    }
+
+    async fn latency_based(&self, candidates: &[&Backend]) -> usize {
+        if let Some(tracker) = &self.latency {
+            let names: Vec<&str> = candidates
+                .iter()
+                .map(|b| self.providers[b.provider_idx].name())
+                .collect();
+
+            if let Some(fastest) = tracker.fastest(&names).await {
+                for b in candidates {
+                    if self.providers[b.provider_idx].name() == fastest {
+                        return b.provider_idx;
+                    }
+                }
+            }
+        }
+
+        // Fallback to first candidate
+        candidates[0].provider_idx
     }
 
     pub fn available_models(&self) -> Vec<&str> {
@@ -108,7 +175,7 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::RoutingStrategy;
+    use crate::config::{CircuitBreakerConfig, RoutingStrategy};
 
     struct FakeProvider {
         name: String,
@@ -153,6 +220,10 @@ mod tests {
         }
     }
 
+    fn make_health() -> HealthTracker {
+        HealthTracker::new(CircuitBreakerConfig::default())
+    }
+
     fn make_providers() -> Vec<Box<dyn LlmProvider>> {
         vec![
             Box::new(FakeProvider {
@@ -166,29 +237,37 @@ mod tests {
         ]
     }
 
-    #[test]
-    fn test_round_robin() {
+    #[tokio::test]
+    async fn test_round_robin() {
         let router = Router::new(
             make_providers(),
             &HashMap::new(),
             RoutingStrategy::RoundRobin,
+            make_health(),
+            None,
         );
-        let first = router.resolve("gpt").unwrap().name();
-        let second = router.resolve("gpt").unwrap().name();
+        let first = router.resolve("gpt").await.unwrap().name();
+        let second = router.resolve("gpt").await.unwrap().name();
         assert_ne!(first, second);
     }
 
-    #[test]
-    fn test_weighted_distribution() {
+    #[tokio::test]
+    async fn test_weighted_distribution() {
         let mut weights = HashMap::new();
         weights.insert("a".to_string(), 3);
         weights.insert("b".to_string(), 1);
 
-        let router = Router::new(make_providers(), &weights, RoutingStrategy::Weighted);
+        let router = Router::new(
+            make_providers(),
+            &weights,
+            RoutingStrategy::Weighted,
+            make_health(),
+            None,
+        );
 
         let mut counts = HashMap::new();
         for _ in 0..100 {
-            let name = router.resolve("gpt").unwrap().name().to_string();
+            let name = router.resolve("gpt").await.unwrap().name().to_string();
             *counts.entry(name).or_insert(0) += 1;
         }
 
@@ -196,23 +275,67 @@ mod tests {
         assert_eq!(counts["b"], 25);
     }
 
-    #[test]
-    fn test_available_models_sorted() {
+    #[tokio::test]
+    async fn test_available_models_sorted() {
         let providers: Vec<Box<dyn LlmProvider>> = vec![Box::new(FakeProvider {
             name: "x".into(),
             models: vec!["z-model".into(), "a-model".into()],
         })];
-        let router = Router::new(providers, &HashMap::new(), RoutingStrategy::RoundRobin);
+        let router = Router::new(
+            providers,
+            &HashMap::new(),
+            RoutingStrategy::RoundRobin,
+            make_health(),
+            None,
+        );
         assert_eq!(router.available_models(), vec!["a-model", "z-model"]);
     }
 
-    #[test]
-    fn test_unknown_model_returns_none() {
+    #[tokio::test]
+    async fn test_unknown_model_returns_none() {
         let router = Router::new(
             make_providers(),
             &HashMap::new(),
             RoutingStrategy::RoundRobin,
+            make_health(),
+            None,
         );
-        assert!(router.resolve("nonexistent").is_none());
+        assert!(router.resolve("nonexistent").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_skips_unhealthy() {
+        let health = make_health();
+        let router = Router::new(
+            make_providers(),
+            &HashMap::new(),
+            RoutingStrategy::RoundRobin,
+            health.clone(),
+            None,
+        );
+
+        // Trip circuit for provider "a"
+        for _ in 0..5 {
+            health.record_failure("a");
+        }
+
+        // All requests should go to "b"
+        for _ in 0..10 {
+            let name = router.resolve("gpt").await.unwrap().name();
+            assert_eq!(name, "b");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_failover_excludes_provider() {
+        let router = Router::new(
+            make_providers(),
+            &HashMap::new(),
+            RoutingStrategy::RoundRobin,
+            make_health(),
+            None,
+        );
+        let failover = router.failover("gpt", "a").unwrap();
+        assert_eq!(failover.name(), "b");
     }
 }
