@@ -5,6 +5,12 @@ services:
     environment:
       CONFIG_PATH: /etc/gateway/gateway.toml
       RUST_LOG: info
+      DB_HOST: "127.0.0.1"
+      REDIS_HOST: "127.0.0.1"
+      OTEL_HOST: "127.0.0.1"
+      MOCK1_HOST: "127.0.0.1"
+      MOCK2_HOST: "127.0.0.1"
+      MOCK3_HOST: "127.0.0.1"
 
   mock-provider-1:
     network_mode: host
@@ -16,6 +22,12 @@ services:
     network_mode: host
     environment:
       PORT: "9002"
+      RUST_LOG: info
+
+  mock-provider-3:
+    network_mode: host
+    environment:
+      PORT: "9003"
       RUST_LOG: info
 
   postgres:
@@ -32,6 +44,8 @@ services:
   prometheus:
     network_mode: host
     ports: !override []
+    volumes:
+      - ./config/prometheus.host.yml:/etc/prometheus/prometheus.yml:ro
 
   grafana:
     network_mode: host

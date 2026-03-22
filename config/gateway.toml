@@ -3,14 +3,14 @@ host = "0.0.0.0"
 port = 8080
 
 [database]
-url = "postgres://postgres:postgres@postgres:5432/llm_gateway"
+url = "postgres://postgres:postgres@${DB_HOST:-postgres}:5432/llm_gateway"
 max_connections = 20
 
 [redis]
-url = "redis://redis:6379"
+url = "redis://${REDIS_HOST:-redis}:6379"
 
 [telemetry]
-otlp_endpoint = "http://otel-collector:4317"
+otlp_endpoint = "http://${OTEL_HOST:-otel-collector}:4317"
 service_name = "llm-gateway"
 
 [auth]
@@ -67,15 +67,22 @@ models = ["gemini-2.5-flash"]
 priority = 1
 
 [[providers]]
-name = "mock-fast"
+name = "mock-replica-1"
 type = "mock"
-base_url = "http://mock-provider-1:9001"
-models = ["mock-fast"]
-priority = 0
+base_url = "http://${MOCK1_HOST:-mock-provider-1}:9001"
+models = ["mock-gpt", "mock-fast"]
+weight = 3
 
 [[providers]]
-name = "mock-slow"
+name = "mock-replica-2"
 type = "mock"
-base_url = "http://mock-provider-2:9002"
-models = ["mock-slow"]
-priority = 0
+base_url = "http://${MOCK2_HOST:-mock-provider-2}:9002"
+models = ["mock-gpt", "mock-slow"]
+weight = 1
+
+[[providers]]
+name = "mock-replica-3"
+type = "mock"
+base_url = "http://${MOCK3_HOST:-mock-provider-3}:9003"
+models = ["mock-gpt"]
+weight = 1
