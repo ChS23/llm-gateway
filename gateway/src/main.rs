@@ -32,10 +32,6 @@ use crate::state::AppState;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-
     let config_path = std::env::var("CONFIG_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("config/gateway.toml"));
@@ -43,6 +39,21 @@ async fn main() {
     let config = Config::load(&config_path).expect("failed to load config");
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let body_limit = config.guardrails.max_request_size_bytes;
+
+    // Init OTel metrics + traces, then set up tracing subscriber with OTel layer
+    let metrics = init_metrics(&config.telemetry);
+    spawn_system_metrics(metrics.clone());
+
+    let otel_layer =
+        tracing_opentelemetry::layer().with_tracer(opentelemetry::global::tracer("llm-gateway"));
+
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env())
+        .with(tracing_subscriber::fmt::layer())
+        .with(otel_layer)
+        .init();
 
     let db = PgPoolOptions::new()
         .max_connections(config.database.max_connections)
@@ -71,9 +82,6 @@ async fn main() {
     };
 
     let health_tracker = crate::routing::health::HealthTracker::new(config.circuit_breaker.clone());
-
-    let metrics = init_metrics(&config.telemetry);
-    spawn_system_metrics(metrics.clone());
 
     // Build initial router from TOML config
     let providers = build_providers(&config);

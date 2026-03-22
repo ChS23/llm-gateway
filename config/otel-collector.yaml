@@ -20,11 +20,10 @@ exporters:
     endpoint: 0.0.0.0:8889
     resource_to_telemetry_conversion:
       enabled: true
-  otlphttp/langfuse:
-    endpoint: ${env:LANGFUSE_BASEURL:-http://langfuse:3000}/api/public/otel
+  otlp_http/langfuse:
+    endpoint: ${env:LANGFUSE_BASEURL:-https://cloud.langfuse.com}/api/public/otel
     headers:
       Authorization: "Basic ${env:LANGFUSE_AUTH:-}"
-      x-langfuse-ingestion-version: "4"
 
 service:
   pipelines:
@@ -35,4 +34,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/langfuse]
+      exporters: [otlp_http/langfuse]

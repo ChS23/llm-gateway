@@ -10,6 +10,16 @@ use crate::state::SharedState;
 use crate::streaming::proxy::proxy_sse;
 use crate::types::{ChatRequest, GatewayError};
 
+#[tracing::instrument(name = "chat", skip_all, fields(
+    gen_ai.operation.name = "chat",
+    gen_ai.request.model,
+    gen_ai.response.model,
+    gen_ai.system,
+    gen_ai.usage.input_tokens,
+    gen_ai.usage.output_tokens,
+    gen_ai.response.finish_reasons,
+    gen_ai.request.streaming,
+))]
 pub async fn chat_completions(
     State(state): State<SharedState>,
     request: Result<Json<ChatRequest>, JsonRejection>,
@@ -29,6 +39,11 @@ pub async fn chat_completions(
             ),
         )
     })?;
+
+    let span = tracing::Span::current();
+    span.record("gen_ai.request.model", request.model.as_str());
+    span.record("gen_ai.system", provider.name());
+    span.record("gen_ai.request.streaming", request.stream);
 
     let result = execute_request(&state, &router, provider, &request).await;
 
@@ -67,10 +82,10 @@ async fn execute_request(
     let start = Instant::now();
 
     tracing::info!(
-        model = %model,
-        provider = %provider_name,
-        stream = request.stream,
-        "routing request"
+        "gen_ai.system" = %provider_name,
+        "gen_ai.request.model" = %model,
+        "gen_ai.request.streaming" = request.stream,
+        "chat request"
     );
 
     let provider_idx = router.provider_index(&provider_name);
@@ -124,7 +139,17 @@ async fn execute_request(
             .metrics
             .record_request(&provider_name, &model, 200, duration.as_secs_f64());
 
-        // Record tokens and cost for JSON mode
+        // GenAI trace attributes for Langfuse
+        let span = tracing::Span::current();
+        span.record("gen_ai.response.model", resp.model.as_str());
+        if let Some(reason) = resp
+            .choices
+            .first()
+            .and_then(|c| c.finish_reason.as_deref())
+        {
+            span.record("gen_ai.response.finish_reasons", reason);
+        }
+
         if let Some(ref usage) = resp.usage {
             state
                 .metrics
@@ -132,6 +157,9 @@ async fn execute_request(
             state
                 .metrics
                 .record_tokens(&model, "output", u64::from(usage.completion_tokens));
+
+            span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+            span.record("gen_ai.usage.output_tokens", usage.completion_tokens);
 
             if let Some(idx) = provider_idx {
                 let cost = router.compute_cost(idx, usage.prompt_tokens, usage.completion_tokens);

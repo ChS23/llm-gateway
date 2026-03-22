@@ -110,26 +110,41 @@ impl Metrics {
 }
 
 pub fn init_metrics(config: &TelemetryConfig) -> Metrics {
-    let exporter = MetricExporter::builder()
+    let resource = Resource::builder()
+        .with_service_name(config.service_name.clone())
+        .build();
+
+    // Metrics exporter
+    let metric_exporter = MetricExporter::builder()
         .with_tonic()
         .with_endpoint(&config.otlp_endpoint)
         .build()
         .expect("failed to create OTLP metric exporter");
 
-    let reader = PeriodicReader::builder(exporter)
+    let reader = PeriodicReader::builder(metric_exporter)
         .with_interval(std::time::Duration::from_secs(10))
         .build();
 
-    let provider = SdkMeterProvider::builder()
-        .with_resource(
-            Resource::builder()
-                .with_service_name(config.service_name.clone())
-                .build(),
-        )
+    let meter_provider = SdkMeterProvider::builder()
+        .with_resource(resource.clone())
         .with_reader(reader)
         .build();
 
-    global::set_meter_provider(provider);
+    global::set_meter_provider(meter_provider);
+
+    // Trace exporter → OTel Collector → Langfuse
+    let trace_exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(&config.otlp_endpoint)
+        .build()
+        .expect("failed to create OTLP trace exporter");
+
+    let trace_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(trace_exporter)
+        .build();
+
+    global::set_tracer_provider(trace_provider);
 
     let meter = global::meter("llm-gateway");
     Metrics::new(&meter)
