@@ -51,6 +51,22 @@ cost_per_output_token = 0.000015
 priority = 1
 
 [[providers]]
+name = "openai-responses"
+type = "openai-responses"
+base_url = "https://api.openai.com/v1"
+api_key = "${OPENAI_API_KEY:-}"
+models = ["gpt-4o", "gpt-4o-mini"]
+priority = 1
+
+[[providers]]
+name = "gemini"
+type = "gemini"
+base_url = "https://generativelanguage.googleapis.com"
+api_key = "${GEMINI_API_KEY:-}"
+models = ["gemini-2.5-flash"]
+priority = 1
+
+[[providers]]
 name = "mock-fast"
 type = "mock"
 base_url = "http://mock-provider-1:9001"
