@@ -8,9 +8,9 @@ use crate::config::Config;
 use crate::middleware::telemetry::Metrics;
 use crate::providers::LlmProvider;
 use crate::providers::mock::MockProvider;
-use crate::routing::Router;
 use crate::routing::health::HealthTracker;
 use crate::routing::latency::LatencyTracker;
+use crate::routing::{CostRate, Router};
 
 pub type SharedState = Arc<AppState>;
 
@@ -23,12 +23,24 @@ pub struct AppState {
     pub latency: Option<LatencyTracker>,
 }
 
+/// DB provider row — all fields needed for routing + cost.
+#[derive(sqlx::FromRow)]
+struct DbProvider {
+    name: String,
+    provider_type: String,
+    base_url: String,
+    models: serde_json::Value,
+    weight: Option<i32>,
+    cost_per_input_token: Option<f64>,
+    cost_per_output_token: Option<f64>,
+}
+
 impl AppState {
-    /// Rebuild routing table from database providers + static TOML config.
-    /// Called on startup and after every provider CRUD operation.
     pub async fn reload_router(&self) -> Result<(), String> {
-        let db_providers = sqlx::query_as::<_, (String, String, String, serde_json::Value, Option<i32>)>(
-            "SELECT name, provider_type, base_url, models, weight FROM providers WHERE is_active = true"
+        let db_providers = sqlx::query_as::<_, DbProvider>(
+            "SELECT name, provider_type, base_url, models, weight, \
+             cost_per_input_token, cost_per_output_token \
+             FROM providers WHERE is_active = true",
         )
         .fetch_all(&self.db)
         .await
@@ -36,43 +48,54 @@ impl AppState {
 
         let mut providers: Vec<Box<dyn LlmProvider>> = Vec::new();
         let mut weights: HashMap<String, u32> = HashMap::new();
+        let mut costs: HashMap<String, CostRate> = HashMap::new();
 
-        // DB providers
-        for (name, provider_type, base_url, models_json, weight) in &db_providers {
+        for row in &db_providers {
             let models: Vec<String> =
-                serde_json::from_value(models_json.clone()).unwrap_or_default();
-            let w = weight.unwrap_or(1) as u32;
+                serde_json::from_value(row.models.clone()).unwrap_or_default();
 
-            match provider_type.as_str() {
+            match row.provider_type.as_str() {
                 "mock" => {
                     providers.push(Box::new(MockProvider::new(
-                        name.clone(),
-                        base_url.clone(),
+                        row.name.clone(),
+                        row.base_url.clone(),
                         models,
                     )));
-                    weights.insert(name.clone(), w);
                 }
-                // DB-registered real providers would need stored API keys
-                // For now, only mock providers can be dynamically added
                 other => {
                     tracing::debug!(
                         provider_type = %other,
-                        name = %name,
+                        name = %row.name,
                         "skipping DB provider (only mock supported for dynamic registration)"
                     );
+                    continue;
                 }
             }
+
+            weights.insert(row.name.clone(), row.weight.unwrap_or(1) as u32);
+            costs.insert(
+                row.name.clone(),
+                CostRate {
+                    input: row.cost_per_input_token.unwrap_or(0.0),
+                    output: row.cost_per_output_token.unwrap_or(0.0),
+                },
+            );
         }
 
-        // Static TOML providers (always present)
+        // Static TOML providers (DB takes precedence)
         for p in &self.config.providers {
-            // Skip if already loaded from DB (DB takes precedence)
             if providers.iter().any(|pr| pr.name() == p.name) {
                 continue;
             }
-
             if let Some(provider) = crate::build_provider(p) {
                 weights.insert(p.name.clone(), p.weight);
+                costs.insert(
+                    p.name.clone(),
+                    CostRate {
+                        input: p.cost_per_input_token.unwrap_or(0.0),
+                        output: p.cost_per_output_token.unwrap_or(0.0),
+                    },
+                );
                 providers.push(provider);
             }
         }
@@ -80,6 +103,7 @@ impl AppState {
         let router = Router::new(
             providers,
             &weights,
+            &costs,
             self.config.routing.default_strategy,
             self.health.clone(),
             self.latency.clone(),
@@ -95,7 +119,6 @@ impl AppState {
         Ok(())
     }
 
-    /// Get current router snapshot (lock-free read).
     pub fn router(&self) -> arc_swap::Guard<Arc<Router>> {
         self.router_swap.load()
     }

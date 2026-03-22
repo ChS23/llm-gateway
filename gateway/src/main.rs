@@ -78,9 +78,11 @@ async fn main() {
     // Build initial router from TOML config
     let providers = build_providers(&config);
     let weights = build_weights(&config);
+    let costs = build_costs(&config);
     let initial_router = LlmRouter::new(
         providers,
         &weights,
+        &costs,
         config.routing.default_strategy,
         health_tracker.clone(),
         latency_tracker.clone(),
@@ -186,6 +188,22 @@ fn build_weights(config: &Config) -> std::collections::HashMap<String, u32> {
         .iter()
         .filter(|p| p.weight > 0)
         .map(|p| (p.name.clone(), p.weight))
+        .collect()
+}
+
+fn build_costs(config: &Config) -> std::collections::HashMap<String, crate::routing::CostRate> {
+    config
+        .providers
+        .iter()
+        .map(|p| {
+            (
+                p.name.clone(),
+                crate::routing::CostRate {
+                    input: p.cost_per_input_token.unwrap_or(0.0),
+                    output: p.cost_per_output_token.unwrap_or(0.0),
+                },
+            )
+        })
         .collect()
 }
 

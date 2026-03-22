@@ -7,6 +7,7 @@ use reqwest::Response;
 
 use super::metrics::StreamMetrics;
 use crate::middleware::telemetry::Metrics;
+use crate::routing::CostRate;
 use crate::types::ChatResponse;
 
 pub fn proxy_sse(
@@ -14,6 +15,7 @@ pub fn proxy_sse(
     provider_name: String,
     model: String,
     otel: Metrics,
+    cost_rate: CostRate,
 ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
     let stream = async_stream::stream! {
         let mut metrics = StreamMetrics::new();
@@ -69,10 +71,16 @@ pub fn proxy_sse(
         }
         otel.record_request(&provider_name, &model, status, metrics.total_duration().as_secs_f64());
 
-        // Record token usage from the final SSE chunk
+        // Record token usage and cost from the final SSE chunk
         if let Some(usage) = &last_usage {
             otel.record_tokens(&model, "input", u64::from(usage.prompt_tokens));
             otel.record_tokens(&model, "output", u64::from(usage.completion_tokens));
+
+            let cost = f64::from(usage.prompt_tokens) * cost_rate.input
+                + f64::from(usage.completion_tokens) * cost_rate.output;
+            if cost > 0.0 {
+                otel.record_cost(&model, cost);
+            }
         }
 
         tracing::info!(

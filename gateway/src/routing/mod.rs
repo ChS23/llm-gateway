@@ -20,11 +20,19 @@ struct ModelBackends {
     counter: AtomicUsize,
 }
 
+/// Per-provider cost rates, pre-computed at router build time.
+#[derive(Clone, Copy, Default)]
+pub struct CostRate {
+    pub input: f64,
+    pub output: f64,
+}
+
 pub struct Router {
     model_map: HashMap<String, ModelBackends>,
     providers: Vec<Box<dyn LlmProvider>>,
-    /// Per-provider in-flight request count for least-connections routing
     in_flight: Vec<AtomicUsize>,
+    /// provider_name → cost per token (avoids HashMap lookup — indexed by provider_idx)
+    cost_rates: Vec<CostRate>,
     strategy: RoutingStrategy,
     pub health: HealthTracker,
     pub latency: Option<LatencyTracker>,
@@ -34,6 +42,7 @@ impl Router {
     pub fn new(
         providers: Vec<Box<dyn LlmProvider>>,
         weights: &HashMap<String, u32>,
+        costs: &HashMap<String, CostRate>,
         strategy: RoutingStrategy,
         health: HealthTracker,
         latency: Option<LatencyTracker>,
@@ -65,9 +74,16 @@ impl Router {
 
         let in_flight = (0..providers.len()).map(|_| AtomicUsize::new(0)).collect();
 
+        // Index cost rates by provider position — O(1) lookup at request time
+        let cost_rates: Vec<CostRate> = providers
+            .iter()
+            .map(|p| costs.get(p.name()).copied().unwrap_or_default())
+            .collect();
+
         Self {
             model_map,
             in_flight,
+            cost_rates,
             providers,
             strategy,
             health,
@@ -173,9 +189,24 @@ impl Router {
         }
     }
 
-    /// Find provider index by name (for acquire/release from handler).
     pub fn provider_index(&self, name: &str) -> Option<usize> {
         self.providers.iter().position(|p| p.name() == name)
+    }
+
+    /// O(1) cost lookup by provider index. No allocation.
+    #[inline]
+    pub fn cost_rate(&self, provider_idx: usize) -> CostRate {
+        self.cost_rates
+            .get(provider_idx)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Compute cost for a request given token counts.
+    #[inline]
+    pub fn compute_cost(&self, provider_idx: usize, input_tokens: u32, output_tokens: u32) -> f64 {
+        let rate = self.cost_rate(provider_idx);
+        f64::from(input_tokens) * rate.input + f64::from(output_tokens) * rate.output
     }
 
     async fn latency_based(&self, candidates: &[&Backend]) -> usize {
@@ -275,6 +306,7 @@ mod tests {
         let router = Router::new(
             make_providers(),
             &HashMap::new(),
+            &HashMap::new(),
             RoutingStrategy::RoundRobin,
             make_health(),
             None,
@@ -293,6 +325,7 @@ mod tests {
         let router = Router::new(
             make_providers(),
             &weights,
+            &HashMap::new(),
             RoutingStrategy::Weighted,
             make_health(),
             None,
@@ -317,6 +350,7 @@ mod tests {
         let router = Router::new(
             providers,
             &HashMap::new(),
+            &HashMap::new(),
             RoutingStrategy::RoundRobin,
             make_health(),
             None,
@@ -328,6 +362,7 @@ mod tests {
     async fn test_unknown_model_returns_none() {
         let router = Router::new(
             make_providers(),
+            &HashMap::new(),
             &HashMap::new(),
             RoutingStrategy::RoundRobin,
             make_health(),
@@ -341,6 +376,7 @@ mod tests {
         let health = make_health();
         let router = Router::new(
             make_providers(),
+            &HashMap::new(),
             &HashMap::new(),
             RoutingStrategy::RoundRobin,
             health.clone(),
@@ -363,6 +399,7 @@ mod tests {
     async fn test_failover_excludes_provider() {
         let router = Router::new(
             make_providers(),
+            &HashMap::new(),
             &HashMap::new(),
             RoutingStrategy::RoundRobin,
             make_health(),

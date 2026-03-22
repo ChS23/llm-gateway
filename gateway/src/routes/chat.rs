@@ -74,6 +74,9 @@ async fn execute_request(
     );
 
     let provider_idx = router.provider_index(&provider_name);
+    let cost_rate = provider_idx
+        .map(|idx| router.cost_rate(idx))
+        .unwrap_or_default();
     if let Some(idx) = provider_idx {
         router.acquire(idx);
     }
@@ -93,6 +96,7 @@ async fn execute_request(
                     provider_name.clone(),
                     model.clone(),
                     state.metrics.clone(),
+                    cost_rate,
                 )
                 .into_response()),
                 Ok(Err(e)) => Err(e),
@@ -109,6 +113,7 @@ async fn execute_request(
                 provider_name.clone(),
                 model.clone(),
                 state.metrics.clone(),
+                cost_rate,
             )
             .into_response())
         }
@@ -118,6 +123,24 @@ async fn execute_request(
         state
             .metrics
             .record_request(&provider_name, &model, 200, duration.as_secs_f64());
+
+        // Record tokens and cost for JSON mode
+        if let Some(ref usage) = resp.usage {
+            state
+                .metrics
+                .record_tokens(&model, "input", u64::from(usage.prompt_tokens));
+            state
+                .metrics
+                .record_tokens(&model, "output", u64::from(usage.completion_tokens));
+
+            if let Some(idx) = provider_idx {
+                let cost = router.compute_cost(idx, usage.prompt_tokens, usage.completion_tokens);
+                if cost > 0.0 {
+                    state.metrics.record_cost(&model, cost);
+                }
+            }
+        }
+
         Ok(Json(resp).into_response())
     };
 
