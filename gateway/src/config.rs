@@ -7,12 +7,18 @@ use serde::Deserialize;
 #[allow(dead_code)] // Fields used in Phase 2/3
 pub struct Config {
     pub server: ServerConfig,
+    #[serde(default)]
     pub database: DatabaseConfig,
+    #[serde(default)]
     pub redis: RedisConfig,
     pub telemetry: TelemetryConfig,
+    #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
     pub routing: RoutingConfig,
+    #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
+    #[serde(default)]
     pub guardrails: GuardrailsConfig,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
@@ -40,17 +46,19 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[allow(dead_code)]
 pub struct DatabaseConfig {
+    #[serde(default)]
     pub url: String,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[allow(dead_code)]
 pub struct RedisConfig {
+    #[serde(default)]
     pub url: String,
 }
 
@@ -70,10 +78,27 @@ pub struct AuthConfig {
     pub hash_algorithm: String,
 }
 
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            key_prefix: default_key_prefix(),
+            hash_algorithm: default_hash_algorithm(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RoutingConfig {
     #[serde(default = "default_strategy")]
     pub default_strategy: RoutingStrategy,
+}
+
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        Self {
+            default_strategy: default_strategy(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +121,16 @@ pub struct CircuitBreakerConfig {
     pub half_open_max_requests: u32,
 }
 
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: default_failure_threshold(),
+            cooldown_seconds: default_cooldown_seconds(),
+            half_open_max_requests: default_half_open_max_requests(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct GuardrailsConfig {
@@ -107,6 +142,16 @@ pub struct GuardrailsConfig {
     pub max_request_size_bytes: usize,
 }
 
+impl Default for GuardrailsConfig {
+    fn default() -> Self {
+        Self {
+            enable_injection_filter: true,
+            enable_secret_scanner: true,
+            max_request_size_bytes: default_max_request_size(),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[allow(dead_code)]
 pub struct ProviderConfig {
@@ -114,7 +159,7 @@ pub struct ProviderConfig {
     #[serde(rename = "type")]
     pub provider_type: String,
     pub base_url: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_non_empty")]
     pub api_key: Option<String>,
     pub models: Vec<String>,
     #[serde(default)]
@@ -139,6 +184,15 @@ impl fmt::Debug for ProviderConfig {
             .field("weight", &self.weight)
             .finish_non_exhaustive()
     }
+}
+
+/// Десериализует строку в Option: пустая строка → None
+fn deserialize_non_empty<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.filter(|s| !s.is_empty()))
 }
 
 fn default_host() -> String {

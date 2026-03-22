@@ -9,7 +9,10 @@ pub struct MockProvider {
     name: String,
     base_url: String,
     models: Vec<String>,
+    /// JSON requests — connect + total timeout
     client: reqwest::Client,
+    /// Streaming — только connect timeout, без total (stream может длиться минуты)
+    stream_client: reqwest::Client,
 }
 
 impl MockProvider {
@@ -20,11 +23,18 @@ impl MockProvider {
             .build()
             .expect("failed to build HTTP client");
 
+        let stream_client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .read_timeout(Duration::from_secs(60))
+            .build()
+            .expect("failed to build streaming HTTP client");
+
         Self {
             name,
             base_url,
             models,
             client,
+            stream_client,
         }
     }
 
@@ -97,7 +107,7 @@ impl LlmProvider for MockProvider {
     ) -> Pin<Box<dyn Future<Output = Result<reqwest::Response, ProviderError>> + Send + 'a>> {
         Box::pin(async move {
             let resp = self
-                .client
+                .stream_client
                 .post(self.url())
                 .json(request)
                 .send()

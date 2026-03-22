@@ -52,6 +52,7 @@ pub fn proxy_sse(
             }
         }
 
+        metrics.finalize();
         let status = if errored { 502 } else { 200 };
 
         if let Some(ttft) = metrics.ttft() {

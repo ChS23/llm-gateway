@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use axum::Json;
 use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 
@@ -9,10 +10,19 @@ use crate::state::SharedState;
 use crate::streaming::proxy::proxy_sse;
 use crate::types::{ChatRequest, GatewayError};
 
+type ApiError = (StatusCode, Json<GatewayError>);
+
 pub async fn chat_completions(
     State(state): State<SharedState>,
-    Json(request): Json<ChatRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<GatewayError>)> {
+    request: Result<Json<ChatRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+    let Json(request) = request.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(GatewayError::new("invalid_request", e.body_text())),
+        )
+    })?;
+
     let provider = state.router.resolve(&request.model).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
