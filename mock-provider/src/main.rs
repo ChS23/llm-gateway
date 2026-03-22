@@ -114,7 +114,7 @@ fn stream_response(model: String) -> Sse<impl Stream<Item = Result<Event, Infall
 
     let stream = async_stream::stream! {
         for (i, token) in tokens.iter().enumerate() {
-            // Имитируем задержку между токенами
+            // Simulate inter-token latency
             tokio::time::sleep(Duration::from_millis(50)).await;
 
             let chunk = ChatResponse {

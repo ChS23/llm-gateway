@@ -5,6 +5,11 @@ use std::pin::Pin;
 
 use crate::types::{ChatRequest, ChatResponse};
 
+/// Provider abstraction for LLM backends.
+///
+/// Uses `Pin<Box<dyn Future>>` instead of `async fn` because this trait
+/// is used as `dyn LlmProvider` (dynamic dispatch) in the router.
+/// `async fn` in traits returns `impl Future` which is not object-safe.
 pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &str;
     fn models(&self) -> &[String];
@@ -14,9 +19,7 @@ pub trait LlmProvider: Send + Sync {
         request: &'a ChatRequest,
     ) -> Pin<Box<dyn Future<Output = Result<ChatResponse, ProviderError>> + Send + 'a>>;
 
-    /// Для streaming — возвращаем сырой reqwest::Response,
-    /// чтобы gateway мог проксировать byte stream напрямую.
-    /// Не парсим тело здесь — это делает streaming::proxy.
+    /// Returns raw response for streaming — body is parsed by streaming::proxy.
     fn chat_completion_stream<'a>(
         &'a self,
         request: &'a ChatRequest,

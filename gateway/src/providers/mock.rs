@@ -7,16 +7,18 @@ use crate::types::{ChatRequest, ChatResponse};
 
 pub struct MockProvider {
     name: String,
-    base_url: String,
     models: Vec<String>,
-    /// JSON requests — connect + total timeout
+    url: String,
+    /// JSON requests: connect + total timeout
     client: reqwest::Client,
-    /// Streaming — только connect timeout, без total (stream может длиться минуты)
+    /// Streaming: connect timeout only, no total (streams can run for minutes)
     stream_client: reqwest::Client,
 }
 
 impl MockProvider {
     pub fn new(name: String, base_url: String, models: Vec<String>) -> Self {
+        let url = format!("{base_url}/v1/chat/completions");
+
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(30))
@@ -31,15 +33,11 @@ impl MockProvider {
 
         Self {
             name,
-            base_url,
             models,
+            url,
             client,
             stream_client,
         }
-    }
-
-    fn url(&self) -> String {
-        format!("{}/v1/chat/completions", self.base_url)
     }
 }
 
@@ -51,7 +49,8 @@ fn map_send_err(e: reqwest::Error) -> ProviderError {
     }
 }
 
-fn check_status(resp: &reqwest::Response) -> Option<(u16, bool)> {
+/// Returns `Some((status, retryable))` on error responses, `None` on success.
+fn error_info(resp: &reqwest::Response) -> Option<(u16, bool)> {
     let status = resp.status().as_u16();
     if resp.status().is_success() {
         None
@@ -76,13 +75,13 @@ impl LlmProvider for MockProvider {
         Box::pin(async move {
             let resp = self
                 .client
-                .post(self.url())
+                .post(&self.url)
                 .json(request)
                 .send()
                 .await
                 .map_err(map_send_err)?;
 
-            if let Some((status, retryable)) = check_status(&resp) {
+            if let Some((status, retryable)) = error_info(&resp) {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(ProviderError {
                     status,
@@ -108,13 +107,13 @@ impl LlmProvider for MockProvider {
         Box::pin(async move {
             let resp = self
                 .stream_client
-                .post(self.url())
+                .post(&self.url)
                 .json(request)
                 .send()
                 .await
                 .map_err(map_send_err)?;
 
-            if let Some((status, retryable)) = check_status(&resp) {
+            if let Some((status, retryable)) = error_info(&resp) {
                 let body = resp.text().await.unwrap_or_default();
                 return Err(ProviderError {
                     status,

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
-/// Собирает метрики по ходу SSE stream.
-/// Создаётся на каждый streaming request, живёт пока stream не завершится.
+/// Collects timing metrics during an SSE stream.
+/// Created per streaming request, lives until the stream completes.
 pub struct StreamMetrics {
     start: Instant,
     first_token_at: Option<Instant>,
@@ -26,7 +26,7 @@ impl StreamMetrics {
         self.token_count += 1;
     }
 
-    /// Фиксируем момент завершения — все метрики после этого консистентны.
+    /// Snapshot the end time — all derived metrics are consistent after this.
     pub fn finalize(&mut self) {
         self.end = Some(Instant::now());
     }

@@ -205,4 +205,14 @@ mod tests {
         let router = Router::new(providers, &HashMap::new(), RoutingStrategy::RoundRobin);
         assert_eq!(router.available_models(), vec!["a-model", "z-model"]);
     }
+
+    #[test]
+    fn test_unknown_model_returns_none() {
+        let router = Router::new(
+            make_providers(),
+            &HashMap::new(),
+            RoutingStrategy::RoundRobin,
+        );
+        assert!(router.resolve("nonexistent").is_none());
+    }
 }

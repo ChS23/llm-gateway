@@ -12,7 +12,6 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 toml = "0.8"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures = "0.3"
-tokio-stream = "0.1"
 eventsource-stream = "0.2"
 async-stream = "0.3"
 opentelemetry = { version = "0.31", features = ["metrics"] }

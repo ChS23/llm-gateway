@@ -3,37 +3,27 @@ use std::time::Instant;
 use axum::Json;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use axum::http::StatusCode;
 use axum::response::IntoResponse;
 
 use crate::state::SharedState;
 use crate::streaming::proxy::proxy_sse;
 use crate::types::{ChatRequest, GatewayError};
 
-type ApiError = (StatusCode, Json<GatewayError>);
-
 pub async fn chat_completions(
     State(state): State<SharedState>,
     request: Result<Json<ChatRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-    let Json(request) = request.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(GatewayError::new("invalid_request", e.body_text())),
-        )
-    })?;
+) -> Result<impl IntoResponse, GatewayError> {
+    let Json(request) =
+        request.map_err(|e| GatewayError::bad_request("invalid_request", e.body_text()))?;
 
     let provider = state.router.resolve(&request.model).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(GatewayError::new(
-                "invalid_model",
-                format!(
-                    "model '{}' not found, available: {:?}",
-                    request.model,
-                    state.router.available_models()
-                ),
-            )),
+        GatewayError::bad_request(
+            "invalid_model",
+            format!(
+                "model '{}' not found, available: {:?}",
+                request.model,
+                state.router.available_models()
+            ),
         )
     })?;
 
@@ -59,10 +49,7 @@ pub async fn chat_completions(
             error = %e.message,
             "provider error"
         );
-        (
-            StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_GATEWAY),
-            Json(GatewayError::new("provider_error", e.message)),
-        )
+        GatewayError::provider_error(e.status, e.message)
     };
 
     if request.stream {
