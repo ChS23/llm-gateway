@@ -27,6 +27,7 @@ hex.workspace = true
 rand.workspace = true
 regex.workspace = true
 sysinfo.workspace = true
+arc-swap.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

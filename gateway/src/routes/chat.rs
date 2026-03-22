@@ -17,20 +17,21 @@ pub async fn chat_completions(
     let Json(request) =
         request.map_err(|e| GatewayError::bad_request("invalid_request", e.body_text()))?;
 
-    let provider = state.router.resolve(&request.model).await.ok_or_else(|| {
+    let router = state.router();
+
+    let provider = router.resolve(&request.model).await.ok_or_else(|| {
         GatewayError::bad_request(
             "invalid_model",
             format!(
                 "model '{}' not found, available: {:?}",
                 request.model,
-                state.router.available_models()
+                router.available_models()
             ),
         )
     })?;
 
-    let result = execute_request(&state, provider, &request).await;
+    let result = execute_request(&state, &router, provider, &request).await;
 
-    // On transient failure, try failover to a different provider
     if let Err(ref e) = result
         && e.retryable
     {
@@ -40,12 +41,12 @@ pub async fn chat_completions(
             "primary provider failed, attempting failover"
         );
 
-        if let Some(fallback) = state.router.failover(&request.model, &failed_name) {
+        if let Some(fallback) = router.failover(&request.model, &failed_name) {
             tracing::info!(
                 provider = %fallback.name(),
                 "failing over to alternate provider"
             );
-            let fallback_result = execute_request(&state, fallback, &request).await;
+            let fallback_result = execute_request(&state, &router, fallback, &request).await;
             if let Ok(response) = fallback_result {
                 return Ok(response);
             }
@@ -57,6 +58,7 @@ pub async fn chat_completions(
 
 async fn execute_request(
     state: &SharedState,
+    router: &crate::routing::Router,
     provider: &dyn LlmProvider,
     request: &ChatRequest,
 ) -> Result<axum::response::Response, ProviderError> {
@@ -71,17 +73,15 @@ async fn execute_request(
         "routing request"
     );
 
-    // Track in-flight for least-connections routing
-    let provider_idx = state.router.provider_index(&provider_name);
+    let provider_idx = router.provider_index(&provider_name);
     if let Some(idx) = provider_idx {
-        state.router.acquire(idx);
+        router.acquire(idx);
     }
 
     let result: Result<axum::response::Response, ProviderError> = if request.stream {
         let ttft_timeout = state.config.routing.ttft_timeout_ms;
 
         if ttft_timeout > 0 {
-            // TTFT timeout: cancel and failover if provider is too slow to respond
             match tokio::time::timeout(
                 Duration::from_millis(ttft_timeout),
                 provider.chat_completion_stream(request),
@@ -122,15 +122,15 @@ async fn execute_request(
     };
 
     if let Some(idx) = provider_idx {
-        state.router.release(idx);
+        router.release(idx);
     }
 
     let duration_ms = start.elapsed().as_millis() as f64;
 
     match &result {
         Ok(_) => {
-            state.router.health.record_success(&provider_name);
-            if let Some(tracker) = &state.router.latency {
+            router.health.record_success(&provider_name);
+            if let Some(tracker) = &router.latency {
                 tracker.record(&provider_name, duration_ms).await;
             }
         }
@@ -142,7 +142,7 @@ async fn execute_request(
                 start.elapsed().as_secs_f64(),
             );
             if e.retryable {
-                state.router.health.record_failure(&provider_name);
+                router.health.record_failure(&provider_name);
             }
             tracing::error!(
                 provider = %provider_name,

@@ -11,6 +11,12 @@ use crate::models::provider::{CreateProvider, Provider, UpdateProvider};
 use crate::state::SharedState;
 use crate::types::GatewayError;
 
+async fn reload_router(state: &SharedState) {
+    if let Err(e) = state.reload_router().await {
+        tracing::error!(error = %e, "failed to reload router after provider change");
+    }
+}
+
 // -- Providers ----------------------------------------------------------------
 
 pub async fn create_provider(
@@ -40,6 +46,7 @@ pub async fn create_provider(
     .await
     .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
 
+    reload_router(&state).await;
     Ok((StatusCode::CREATED, Json(provider)))
 }
 
@@ -110,6 +117,7 @@ pub async fn update_provider(
     .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?
     .ok_or_else(|| GatewayError::not_found("provider not found"))?;
 
+    reload_router(&state).await;
     Ok(Json(provider))
 }
 
@@ -128,6 +136,7 @@ pub async fn delete_provider(
         return Err(GatewayError::not_found("provider not found"));
     }
 
+    reload_router(&state).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

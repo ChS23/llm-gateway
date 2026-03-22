@@ -671,6 +671,7 @@ dependencies = [
 name = "gateway"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "async-stream",
  "axum",
  "chrono",

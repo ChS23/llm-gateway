@@ -11,6 +11,7 @@ mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post, put};
@@ -18,7 +19,7 @@ use sqlx::postgres::PgPoolOptions;
 use tokio::signal;
 use tracing_subscriber::EnvFilter;
 
-use crate::config::Config;
+use crate::config::{Config, ProviderConfig};
 use crate::middleware::telemetry::{init_metrics, spawn_system_metrics};
 use crate::providers::anthropic::AnthropicProvider;
 use crate::providers::gemini::GeminiProvider;
@@ -43,7 +44,6 @@ async fn main() {
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let body_limit = config.guardrails.max_request_size_bytes;
 
-    // Database pool
     let db = PgPoolOptions::new()
         .max_connections(config.database.max_connections)
         .connect(&config.database.url)
@@ -57,7 +57,6 @@ async fn main() {
 
     tracing::info!("database connected, migrations applied");
 
-    // Redis for latency tracking
     use fred::prelude::ClientLike;
     let latency_tracker = if !config.redis.url.is_empty() {
         let redis_config =
@@ -76,36 +75,37 @@ async fn main() {
     let metrics = init_metrics(&config.telemetry);
     spawn_system_metrics(metrics.clone());
 
+    // Build initial router from TOML config
     let providers = build_providers(&config);
-
-    let weights: std::collections::HashMap<String, u32> = config
-        .providers
-        .iter()
-        .filter(|p| p.weight > 0)
-        .map(|p| (p.name.clone(), p.weight))
-        .collect();
-
-    let llm_router = LlmRouter::new(
+    let weights = build_weights(&config);
+    let initial_router = LlmRouter::new(
         providers,
         &weights,
         config.routing.default_strategy,
-        health_tracker,
-        latency_tracker,
+        health_tracker.clone(),
+        latency_tracker.clone(),
     );
 
     tracing::info!(
-        models = ?llm_router.available_models(),
+        models = ?initial_router.available_models(),
         "loaded providers"
     );
 
     let state = Arc::new(AppState {
         config,
-        router: llm_router,
+        router_swap: ArcSwap::new(Arc::new(initial_router)),
         metrics,
         db,
+        health: health_tracker,
+        latency: latency_tracker,
     });
 
-    // Authenticated routes: Auth → Guardrails → handler
+    // Reload router from DB (merges TOML + DB providers)
+    if let Err(e) = state.reload_router().await {
+        tracing::warn!(error = %e, "initial router reload from DB failed, using TOML config");
+    }
+
+    // Authenticated API routes
     let api_routes = Router::new()
         .route("/v1/chat/completions", post(routes::chat::chat_completions))
         .layer(axum::middleware::from_fn_with_state(
@@ -117,7 +117,7 @@ async fn main() {
             crate::middleware::auth::auth_middleware,
         ));
 
-    // Admin routes: no auth (operator access)
+    // Admin routes (no auth)
     let admin_routes = Router::new()
         .route("/admin/providers", post(admin::create_provider))
         .route("/admin/providers", get(admin::list_providers))
@@ -180,80 +180,70 @@ async fn shutdown_signal() {
     }
 }
 
+fn build_weights(config: &Config) -> std::collections::HashMap<String, u32> {
+    config
+        .providers
+        .iter()
+        .filter(|p| p.weight > 0)
+        .map(|p| (p.name.clone(), p.weight))
+        .collect()
+}
+
 fn build_providers(config: &Config) -> Vec<Box<dyn providers::LlmProvider>> {
     config
         .providers
         .iter()
-        .filter_map(|p| match p.provider_type.as_str() {
-            "mock" => Some(Box::new(MockProvider::new(
+        .filter_map(|p| build_provider(p))
+        .collect()
+}
+
+/// Build a single LlmProvider from config. Public for reuse in state.rs hot reload.
+pub fn build_provider(p: &ProviderConfig) -> Option<Box<dyn providers::LlmProvider>> {
+    match p.provider_type.as_str() {
+        "mock" => Some(Box::new(MockProvider::new(
+            p.name.clone(),
+            p.base_url.clone(),
+            p.models.clone(),
+        ))),
+        "openai" => {
+            let api_key = p.api_key.as_ref()?;
+            Some(Box::new(OpenAiProvider::new(
                 p.name.clone(),
                 p.base_url.clone(),
+                api_key.clone(),
                 p.models.clone(),
-            )) as Box<dyn providers::LlmProvider>),
-            "openai" => {
-                let api_key = match &p.api_key {
-                    Some(key) => key.clone(),
-                    None => {
-                        tracing::warn!(provider = %p.name, "openai provider missing api_key, skipping");
-                        return None;
-                    }
-                };
-                Some(Box::new(OpenAiProvider::new(
-                    p.name.clone(),
-                    p.base_url.clone(),
-                    api_key,
-                    p.models.clone(),
-                )) as Box<dyn providers::LlmProvider>)
-            }
-            "anthropic" => {
-                let api_key = match &p.api_key {
-                    Some(key) => key.clone(),
-                    None => {
-                        tracing::warn!(provider = %p.name, "anthropic provider missing api_key, skipping");
-                        return None;
-                    }
-                };
-                Some(Box::new(AnthropicProvider::new(
-                    p.name.clone(),
-                    p.base_url.clone(),
-                    api_key,
-                    p.models.clone(),
-                )) as Box<dyn providers::LlmProvider>)
-            }
-            "openai-responses" => {
-                let api_key = match &p.api_key {
-                    Some(key) => key.clone(),
-                    None => {
-                        tracing::warn!(provider = %p.name, "openai-responses provider missing api_key, skipping");
-                        return None;
-                    }
-                };
-                Some(Box::new(OpenAiResponsesProvider::new(
-                    p.name.clone(),
-                    p.base_url.clone(),
-                    api_key,
-                    p.models.clone(),
-                )) as Box<dyn providers::LlmProvider>)
-            }
-            "gemini" => {
-                let api_key = match &p.api_key {
-                    Some(key) => key.clone(),
-                    None => {
-                        tracing::warn!(provider = %p.name, "gemini provider missing api_key, skipping");
-                        return None;
-                    }
-                };
-                Some(Box::new(GeminiProvider::new(
-                    p.name.clone(),
-                    p.base_url.clone(),
-                    api_key,
-                    p.models.clone(),
-                )) as Box<dyn providers::LlmProvider>)
-            }
-            other => {
-                tracing::warn!(provider_type = %other, "unknown provider type, skipping");
-                None
-            }
-        })
-        .collect()
+            )))
+        }
+        "anthropic" => {
+            let api_key = p.api_key.as_ref()?;
+            Some(Box::new(AnthropicProvider::new(
+                p.name.clone(),
+                p.base_url.clone(),
+                api_key.clone(),
+                p.models.clone(),
+            )))
+        }
+        "openai-responses" => {
+            let api_key = p.api_key.as_ref()?;
+            Some(Box::new(OpenAiResponsesProvider::new(
+                p.name.clone(),
+                p.base_url.clone(),
+                api_key.clone(),
+                p.models.clone(),
+            )))
+        }
+        "gemini" => {
+            let api_key = p.api_key.as_ref()?;
+            Some(Box::new(GeminiProvider::new(
+                p.name.clone(),
+                p.base_url.clone(),
+                api_key.clone(),
+                p.models.clone(),
+            )))
+        }
+        other => {
+            tracing::warn!(provider_type = %other, "unknown provider type, skipping");
+            None
+        }
+    }
 }
