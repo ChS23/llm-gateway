@@ -103,34 +103,9 @@ async fn main() {
         db,
     });
 
-    let app = Router::new()
-        // LLM proxy
+    // Authenticated routes: Auth → Guardrails → handler
+    let api_routes = Router::new()
         .route("/v1/chat/completions", post(routes::chat::chat_completions))
-        // Provider registry
-        .route("/admin/providers", post(admin::create_provider))
-        .route("/admin/providers", get(admin::list_providers))
-        .route("/admin/providers/{id}", get(admin::get_provider))
-        .route("/admin/providers/{id}", put(admin::update_provider))
-        .route("/admin/providers/{id}", delete(admin::delete_provider))
-        // Agent registry
-        .route("/admin/agents", post(admin::create_agent))
-        .route("/admin/agents", get(admin::list_agents))
-        .route("/admin/agents/{id}", get(admin::get_agent))
-        .route("/admin/agents/{id}", put(admin::update_agent))
-        .route("/admin/agents/{id}", delete(admin::delete_agent))
-        // A2A discovery
-        .route(
-            "/admin/agents/{id}/.well-known/agent-card.json",
-            get(admin::get_agent_card),
-        )
-        // API key management
-        .route("/admin/keys", post(admin::create_api_key))
-        .route("/admin/keys", get(admin::list_api_keys))
-        .route("/admin/keys/{id}", delete(admin::delete_api_key))
-        // Health
-        .route("/health", get(routes::health::health))
-        // Middleware: order matters — outermost runs first
-        // Rate Limit → Auth → Guardrails → handler
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::guardrails::guardrails_middleware,
@@ -138,7 +113,32 @@ async fn main() {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::auth::auth_middleware,
-        ))
+        ));
+
+    // Admin routes: no auth (operator access)
+    let admin_routes = Router::new()
+        .route("/admin/providers", post(admin::create_provider))
+        .route("/admin/providers", get(admin::list_providers))
+        .route("/admin/providers/{id}", get(admin::get_provider))
+        .route("/admin/providers/{id}", put(admin::update_provider))
+        .route("/admin/providers/{id}", delete(admin::delete_provider))
+        .route("/admin/agents", post(admin::create_agent))
+        .route("/admin/agents", get(admin::list_agents))
+        .route("/admin/agents/{id}", get(admin::get_agent))
+        .route("/admin/agents/{id}", put(admin::update_agent))
+        .route("/admin/agents/{id}", delete(admin::delete_agent))
+        .route(
+            "/admin/agents/{id}/.well-known/agent-card.json",
+            get(admin::get_agent_card),
+        )
+        .route("/admin/keys", post(admin::create_api_key))
+        .route("/admin/keys", get(admin::list_api_keys))
+        .route("/admin/keys/{id}", delete(admin::delete_api_key));
+
+    let app = Router::new()
+        .merge(api_routes)
+        .merge(admin_routes)
+        .route("/health", get(routes::health::health))
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);
 
