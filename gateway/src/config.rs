@@ -100,6 +100,8 @@ pub struct ProviderConfig {
     pub cost_per_output_token: Option<f64>,
     #[serde(default)]
     pub priority: i32,
+    #[serde(default = "default_weight")]
+    pub weight: u32,
 }
 
 fn default_host() -> String {
@@ -137,6 +139,9 @@ fn default_true() -> bool {
 }
 fn default_max_request_size() -> usize {
     1_048_576
+}
+fn default_weight() -> u32 {
+    1
 }
 
 impl Config {

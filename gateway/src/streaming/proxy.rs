@@ -6,22 +6,17 @@ use futures::StreamExt;
 use reqwest::Response;
 
 use super::metrics::StreamMetrics;
+use crate::middleware::telemetry::Metrics;
 use crate::types::ChatResponse;
 
-/// Принимает HTTP response от провайдера (с SSE body),
-/// парсит events, собирает метрики, re-emit клиенту.
-///
-/// Паттерн: reqwest bytes stream → eventsource parser → наш transform → axum Sse
 pub fn proxy_sse(
     response: Response,
     provider_name: String,
     model: String,
+    otel: Metrics,
 ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
     let stream = async_stream::stream! {
         let mut metrics = StreamMetrics::new();
-
-        // response.bytes_stream() — поток raw bytes от провайдера
-        // .eventsource() — парсит SSE формат (data: ...\n\n) в типизированные events
         let mut event_stream = response.bytes_stream().eventsource();
 
         while let Some(event_result) = event_stream.next().await {
@@ -34,7 +29,6 @@ pub fn proxy_sse(
                         break;
                     }
 
-                    // Пробуем распарсить chunk для метрик
                     if let Ok(chunk) = serde_json::from_str::<ChatResponse>(&data) {
                         let has_content = chunk.choices.iter().any(|c| {
                             c.delta.as_ref().is_some_and(|d| {
@@ -56,7 +50,14 @@ pub fn proxy_sse(
             }
         }
 
-        // Логируем метрики после завершения stream
+        if let Some(ttft) = metrics.ttft() {
+            otel.record_ttft(&provider_name, &model, ttft.as_secs_f64());
+        }
+        if let Some(tpot) = metrics.tpot() {
+            otel.record_tpot(&provider_name, &model, tpot.as_secs_f64());
+        }
+        otel.record_request(&provider_name, &model, 200, metrics.total_duration().as_secs_f64());
+
         tracing::info!(
             provider = %provider_name,
             model = %model,

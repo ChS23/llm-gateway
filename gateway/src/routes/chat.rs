@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -27,6 +29,7 @@ pub async fn chat_completions(
 
     let provider_name = provider.name().to_string();
     let model = request.model.clone();
+    let start = Instant::now();
 
     tracing::info!(
         model = %model,
@@ -36,6 +39,10 @@ pub async fn chat_completions(
     );
 
     let map_err = |e: crate::providers::ProviderError| {
+        let duration = start.elapsed().as_secs_f64();
+        state
+            .metrics
+            .record_request(&provider_name, &model, e.status, duration);
         tracing::error!(
             provider = %provider_name,
             status = e.status,
@@ -53,9 +60,13 @@ pub async fn chat_completions(
             .chat_completion_stream(&request)
             .await
             .map_err(map_err)?;
-        Ok(proxy_sse(response, provider_name, model).into_response())
+        Ok(proxy_sse(response, provider_name, model, state.metrics.clone()).into_response())
     } else {
         let response = provider.chat_completion(&request).await.map_err(map_err)?;
+        let duration = start.elapsed().as_secs_f64();
+        state
+            .metrics
+            .record_request(&provider_name, &model, 200, duration);
         Ok(Json(response).into_response())
     }
 }

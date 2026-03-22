@@ -16,6 +16,9 @@ futures.workspace = true
 tokio-stream.workspace = true
 eventsource-stream.workspace = true
 async-stream.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

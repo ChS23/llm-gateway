@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod config;
+mod middleware;
 mod providers;
 mod routes;
 mod routing;
@@ -18,6 +19,7 @@ use axum::{
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
+use crate::middleware::telemetry::init_metrics;
 use crate::providers::mock::MockProvider;
 use crate::routing::Router as LlmRouter;
 use crate::state::AppState;
@@ -35,8 +37,17 @@ async fn main() {
     let config = Config::load(&config_path).expect("failed to load config");
     let addr = format!("{}:{}", config.server.host, config.server.port);
 
+    let metrics = init_metrics(&config.telemetry);
     let providers = build_providers(&config);
-    let llm_router = LlmRouter::new(providers);
+
+    let weights: std::collections::HashMap<String, u32> = config
+        .providers
+        .iter()
+        .filter(|p| p.weight > 0)
+        .map(|p| (p.name.clone(), p.weight))
+        .collect();
+
+    let llm_router = LlmRouter::new(providers, &weights, config.routing.default_strategy);
 
     tracing::info!(
         models = ?llm_router.available_models(),
@@ -46,6 +57,7 @@ async fn main() {
     let state = Arc::new(AppState {
         config,
         router: llm_router,
+        metrics,
     });
 
     let app = Router::new()

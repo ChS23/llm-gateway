@@ -7,9 +7,3 @@ scrape_configs:
     static_configs:
       - targets: ["otel-collector:8889"]
     fallback_scrape_protocol: PrometheusText0.0.4
-
-  - job_name: gateway
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["gateway:8080"]
-    fallback_scrape_protocol: PrometheusText0.0.4
