@@ -36,6 +36,17 @@ services:
       target: mock-provider
     environment:
       PORT: "9002"
+      MOCK_LATENCY_MS: "100"
+      RUST_LOG: info
+
+  mock-provider-3:
+    container_name: mock-provider-3
+    build:
+      context: .
+      target: mock-provider
+    environment:
+      PORT: "9003"
+      MOCK_LATENCY_MS: "200"
       RUST_LOG: info
 
   postgres:

@@ -23,6 +23,8 @@ struct ModelBackends {
 pub struct Router {
     model_map: HashMap<String, ModelBackends>,
     providers: Vec<Box<dyn LlmProvider>>,
+    /// Per-provider in-flight request count for least-connections routing
+    in_flight: Vec<AtomicUsize>,
     strategy: RoutingStrategy,
     pub health: HealthTracker,
     pub latency: Option<LatencyTracker>,
@@ -61,8 +63,11 @@ impl Router {
             })
             .collect();
 
+        let in_flight = (0..providers.len()).map(|_| AtomicUsize::new(0)).collect();
+
         Self {
             model_map,
+            in_flight,
             providers,
             strategy,
             health,
@@ -99,6 +104,7 @@ impl Router {
             RoutingStrategy::RoundRobin => self.round_robin(entry, &candidates),
             RoutingStrategy::Weighted => self.weighted(entry, &candidates),
             RoutingStrategy::Latency => self.latency_based(&candidates).await,
+            RoutingStrategy::LeastConnections => self.least_connections(&candidates),
             RoutingStrategy::HealthAware => self.round_robin(entry, &candidates),
         };
 
@@ -143,6 +149,33 @@ impl Router {
         }
 
         candidates.last().unwrap().provider_idx
+    }
+
+    /// Route to the provider with fewest in-flight requests.
+    fn least_connections(&self, candidates: &[&Backend]) -> usize {
+        candidates
+            .iter()
+            .min_by_key(|b| self.in_flight[b.provider_idx].load(Ordering::Relaxed))
+            .unwrap()
+            .provider_idx
+    }
+
+    /// Acquire an in-flight slot for a provider. Call release() when done.
+    pub fn acquire(&self, provider_idx: usize) {
+        if provider_idx < self.in_flight.len() {
+            self.in_flight[provider_idx].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn release(&self, provider_idx: usize) {
+        if provider_idx < self.in_flight.len() {
+            self.in_flight[provider_idx].fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Find provider index by name (for acquire/release from handler).
+    pub fn provider_index(&self, name: &str) -> Option<usize> {
+        self.providers.iter().position(|p| p.name() == name)
     }
 
     async fn latency_based(&self, candidates: &[&Backend]) -> usize {

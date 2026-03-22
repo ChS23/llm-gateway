@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::State;
@@ -71,15 +71,47 @@ async fn execute_request(
         "routing request"
     );
 
+    // Track in-flight for least-connections routing
+    let provider_idx = state.router.provider_index(&provider_name);
+    if let Some(idx) = provider_idx {
+        state.router.acquire(idx);
+    }
+
     let result: Result<axum::response::Response, ProviderError> = if request.stream {
-        let resp = provider.chat_completion_stream(request).await?;
-        Ok(proxy_sse(
-            resp,
-            provider_name.clone(),
-            model.clone(),
-            state.metrics.clone(),
-        )
-        .into_response())
+        let ttft_timeout = state.config.routing.ttft_timeout_ms;
+
+        if ttft_timeout > 0 {
+            // TTFT timeout: cancel and failover if provider is too slow to respond
+            match tokio::time::timeout(
+                Duration::from_millis(ttft_timeout),
+                provider.chat_completion_stream(request),
+            )
+            .await
+            {
+                Ok(Ok(resp)) => Ok(proxy_sse(
+                    resp,
+                    provider_name.clone(),
+                    model.clone(),
+                    state.metrics.clone(),
+                )
+                .into_response()),
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err(ProviderError {
+                    status: 504,
+                    message: format!("TTFT timeout ({ttft_timeout}ms) exceeded"),
+                    retryable: true,
+                }),
+            }
+        } else {
+            let resp = provider.chat_completion_stream(request).await?;
+            Ok(proxy_sse(
+                resp,
+                provider_name.clone(),
+                model.clone(),
+                state.metrics.clone(),
+            )
+            .into_response())
+        }
     } else {
         let resp = provider.chat_completion(request).await?;
         let duration = start.elapsed();
@@ -89,9 +121,12 @@ async fn execute_request(
         Ok(Json(resp).into_response())
     };
 
+    if let Some(idx) = provider_idx {
+        state.router.release(idx);
+    }
+
     let duration_ms = start.elapsed().as_millis() as f64;
 
-    // Record latency and health
     match &result {
         Ok(_) => {
             state.router.health.record_success(&provider_name);

@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::response::IntoResponse;
@@ -7,6 +8,8 @@ use axum::{Json, Router, routing::post};
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
+
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::main]
 async fn main() {
@@ -17,7 +20,9 @@ async fn main() {
     let port = std::env::var("PORT").unwrap_or_else(|_| "9001".into());
     let addr = format!("0.0.0.0:{port}");
 
-    let app = Router::new().route("/v1/chat/completions", post(chat_completions));
+    let app = Router::new()
+        .route("/v1/chat/completions", post(chat_completions))
+        .route("/health", axum::routing::get(|| async { "ok" }));
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -26,6 +31,25 @@ async fn main() {
     tracing::info!("mock-provider listening on {addr}");
 
     axum::serve(listener, app).await.expect("server error");
+}
+
+fn provider_id() -> String {
+    let port = std::env::var("PORT").unwrap_or_else(|_| "9001".into());
+    format!("mock:{port}")
+}
+
+fn token_latency_ms() -> u64 {
+    std::env::var("MOCK_LATENCY_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+}
+
+fn error_rate() -> f64 {
+    std::env::var("MOCK_ERROR_RATE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0)
 }
 
 #[derive(Deserialize)]
@@ -80,6 +104,18 @@ struct Usage {
 }
 
 async fn chat_completions(Json(req): Json<ChatRequest>) -> impl IntoResponse {
+    let count = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+    // Simulate errors based on MOCK_ERROR_RATE
+    let err_rate = error_rate();
+    if err_rate > 0.0 && (count as f64 % (1.0 / err_rate)) < 1.0 {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "simulated failure"})),
+        )
+            .into_response();
+    }
+
     if req.stream {
         stream_response(req.model).into_response()
     } else {
@@ -87,16 +123,22 @@ async fn chat_completions(Json(req): Json<ChatRequest>) -> impl IntoResponse {
     }
 }
 
+fn request_id() -> String {
+    let count = REQUEST_COUNTER.load(Ordering::Relaxed);
+    format!("mock-{}-{count}", provider_id())
+}
+
 fn json_response(model: String) -> Json<ChatResponse> {
+    let pid = provider_id();
     Json(ChatResponse {
-        id: "mock-12345".into(),
+        id: request_id(),
         object: "chat.completion".into(),
         model,
         choices: vec![Choice {
             index: 0,
             message: Some(ResponseMessage {
                 role: Some("assistant".into()),
-                content: Some("Hello from mock provider!".into()),
+                content: Some(format!("Hello from {pid}!")),
             }),
             delta: None,
             finish_reason: Some("stop".into()),
@@ -110,15 +152,16 @@ fn json_response(model: String) -> Json<ChatResponse> {
 }
 
 fn stream_response(model: String) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let tokens = ["Hello", " from", " mock", " provider", "!"];
+    let latency = token_latency_ms();
 
     let stream = async_stream::stream! {
+        let pid = provider_id();
+        let tokens: [String; 4] = ["Hello".into(), " from".into(), format!(" {pid}"), "!".into()];
         for (i, token) in tokens.iter().enumerate() {
-            // Simulate inter-token latency
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(latency)).await;
 
             let chunk = ChatResponse {
-                id: "mock-12345".into(),
+                id: request_id(),
                 object: "chat.completion.chunk".into(),
                 model: model.clone(),
                 choices: vec![Choice {
@@ -141,9 +184,8 @@ fn stream_response(model: String) -> Sse<impl Stream<Item = Result<Event, Infall
             yield Ok(Event::default().data(data));
         }
 
-        // Финальный chunk с finish_reason
         let done_chunk = ChatResponse {
-            id: "mock-12345".into(),
+            id: request_id(),
             object: "chat.completion.chunk".into(),
             model: model.clone(),
             choices: vec![Choice {

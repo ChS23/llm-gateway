@@ -11,22 +11,27 @@ url = "redis://127.0.0.1:6379"
 [telemetry]
 otlp_endpoint = "http://127.0.0.1:4317"
 
-[auth]
-
 [routing]
+default_strategy = "round-robin"
 
-[circuit_breaker]
-
-[guardrails]
-
+# Three replicas of "mock-gpt" across different providers → round-robin
 [[providers]]
-name = "mock-fast"
+name = "replica-1"
 type = "mock"
 base_url = "http://127.0.0.1:9001"
-models = ["mock-fast"]
+models = ["mock-gpt", "mock-fast"]
+weight = 3
 
 [[providers]]
-name = "mock-slow"
+name = "replica-2"
 type = "mock"
 base_url = "http://127.0.0.1:9002"
-models = ["mock-slow"]
+models = ["mock-gpt", "mock-slow"]
+weight = 1
+
+[[providers]]
+name = "replica-3"
+type = "mock"
+base_url = "http://127.0.0.1:9003"
+models = ["mock-gpt"]
+weight = 1

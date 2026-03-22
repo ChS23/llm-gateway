@@ -125,12 +125,17 @@ impl Default for AuthConfig {
 pub struct RoutingConfig {
     #[serde(default = "default_strategy")]
     pub default_strategy: RoutingStrategy,
+    /// SSE failover: cancel and retry on another provider if first token
+    /// doesn't arrive within this timeout. 0 = disabled.
+    #[serde(default = "default_ttft_timeout_ms")]
+    pub ttft_timeout_ms: u64,
 }
 
 impl Default for RoutingConfig {
     fn default() -> Self {
         Self {
             default_strategy: default_strategy(),
+            ttft_timeout_ms: default_ttft_timeout_ms(),
         }
     }
 }
@@ -141,6 +146,7 @@ pub enum RoutingStrategy {
     RoundRobin,
     Weighted,
     Latency,
+    LeastConnections,
     HealthAware,
 }
 
@@ -265,6 +271,9 @@ fn default_max_request_size() -> usize {
 }
 fn default_weight() -> u32 {
     1
+}
+fn default_ttft_timeout_ms() -> u64 {
+    5000
 }
 
 impl Config {
