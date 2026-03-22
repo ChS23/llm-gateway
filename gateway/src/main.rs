@@ -1,5 +1,6 @@
 mod config;
 mod middleware;
+mod models;
 mod providers;
 mod routes;
 mod routing;
@@ -10,17 +11,17 @@ mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::{
-    Router,
-    routing::{get, post},
-};
+use axum::routing::{delete, get, post, put};
+use sqlx::postgres::PgPoolOptions;
 use tokio::signal;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 use crate::middleware::telemetry::init_metrics;
 use crate::providers::mock::MockProvider;
+use crate::routes::admin;
 use crate::routing::Router as LlmRouter;
 use crate::state::AppState;
 
@@ -37,6 +38,20 @@ async fn main() {
     let config = Config::load(&config_path).expect("failed to load config");
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let body_limit = config.guardrails.max_request_size_bytes;
+
+    // Database pool
+    let db = PgPoolOptions::new()
+        .max_connections(config.database.max_connections)
+        .connect(&config.database.url)
+        .await
+        .expect("failed to connect to database");
+
+    sqlx::migrate!("../migrations")
+        .run(&db)
+        .await
+        .expect("failed to run migrations");
+
+    tracing::info!("database connected, migrations applied");
 
     let metrics = init_metrics(&config.telemetry);
     let providers = build_providers(&config);
@@ -59,10 +74,30 @@ async fn main() {
         config,
         router: llm_router,
         metrics,
+        db,
     });
 
     let app = Router::new()
+        // LLM proxy
         .route("/v1/chat/completions", post(routes::chat::chat_completions))
+        // Provider registry
+        .route("/admin/providers", post(admin::create_provider))
+        .route("/admin/providers", get(admin::list_providers))
+        .route("/admin/providers/{id}", get(admin::get_provider))
+        .route("/admin/providers/{id}", put(admin::update_provider))
+        .route("/admin/providers/{id}", delete(admin::delete_provider))
+        // Agent registry
+        .route("/admin/agents", post(admin::create_agent))
+        .route("/admin/agents", get(admin::list_agents))
+        .route("/admin/agents/{id}", get(admin::get_agent))
+        .route("/admin/agents/{id}", put(admin::update_agent))
+        .route("/admin/agents/{id}", delete(admin::delete_agent))
+        // A2A discovery
+        .route(
+            "/admin/agents/{id}/.well-known/agent-card.json",
+            get(admin::get_agent_card),
+        )
+        // Health
         .route("/health", get(routes::health::health))
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);

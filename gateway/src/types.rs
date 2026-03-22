@@ -83,6 +83,16 @@ impl GatewayError {
         }
     }
 
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            error: ErrorBody {
+                message: message.into(),
+                error_type: "not_found".into(),
+            },
+        }
+    }
+
     pub fn provider_error(status: u16, message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
