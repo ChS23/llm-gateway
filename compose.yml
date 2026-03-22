@@ -1,5 +1,6 @@
 services:
   gateway:
+    container_name: llm-gateway
     build:
       context: .
       target: gateway
@@ -8,6 +9,7 @@ services:
       RUST_LOG: info
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - ./config/gateway.toml:/etc/gateway/gateway.toml:ro
     ports:
@@ -19,6 +21,7 @@ services:
         condition: service_healthy
 
   mock-provider-1:
+    container_name: mock-provider-1
     build:
       context: .
       target: mock-provider
@@ -27,6 +30,7 @@ services:
       RUST_LOG: info
 
   mock-provider-2:
+    container_name: mock-provider-2
     build:
       context: .
       target: mock-provider
@@ -35,6 +39,7 @@ services:
       RUST_LOG: info
 
   postgres:
+    container_name: llm-gateway-postgres
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: llm_gateway
@@ -49,6 +54,7 @@ services:
       retries: 5
 
   redis:
+    container_name: llm-gateway-redis
     image: redis:8-alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -57,6 +63,7 @@ services:
       retries: 5
 
   otel-collector:
+    container_name: llm-gateway-otel
     image: otel/opentelemetry-collector-contrib:0.147.0
     environment:
       LANGFUSE_BASEURL: ${LANGFUSE_BASEURL:-https://cloud.langfuse.com}
@@ -66,12 +73,14 @@ services:
     command: ["--config", "/etc/otelcol/config.yaml"]
 
   prometheus:
+    container_name: llm-gateway-prometheus
     image: prom/prometheus:v3.10.0
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - promdata:/prometheus
 
   grafana:
+    container_name: llm-gateway-grafana
     image: grafana/grafana:12.4.0
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -81,7 +90,6 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafdata:/var/lib/grafana
-
 
 volumes:
   pgdata:

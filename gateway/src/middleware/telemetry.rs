@@ -1,4 +1,4 @@
-use opentelemetry::metrics::{Counter, Histogram, Meter, UpDownCounter};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter};
 use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::{MetricExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
@@ -7,7 +7,7 @@ use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use crate::config::TelemetryConfig;
 
 #[derive(Clone)]
-#[allow(dead_code)] // Fields used as more metrics are wired up
+#[allow(dead_code)]
 pub struct Metrics {
     pub requests_total: Counter<u64>,
     pub request_duration: Histogram<f64>,
@@ -16,6 +16,8 @@ pub struct Metrics {
     pub token_usage: Counter<u64>,
     pub request_cost: Counter<f64>,
     pub provider_healthy: UpDownCounter<i64>,
+    pub cpu_usage: Gauge<f64>,
+    pub memory_usage: Gauge<u64>,
 }
 
 impl Metrics {
@@ -52,6 +54,15 @@ impl Metrics {
             provider_healthy: meter
                 .i64_up_down_counter("llm_gateway.provider.healthy")
                 .with_description("Provider health status (1 = healthy, -1 = unhealthy)")
+                .build(),
+            cpu_usage: meter
+                .f64_gauge("process.cpu.utilization")
+                .with_description("Process CPU utilization (0.0 - 1.0)")
+                .build(),
+            memory_usage: meter
+                .u64_gauge("process.memory.usage")
+                .with_description("Process resident memory in bytes")
+                .with_unit("By")
                 .build(),
         }
     }
@@ -122,4 +133,29 @@ pub fn init_metrics(config: &TelemetryConfig) -> Metrics {
 
     let meter = global::meter("llm-gateway");
     Metrics::new(&meter)
+}
+
+/// Background task that samples process CPU and memory every 10 seconds.
+pub fn spawn_system_metrics(metrics: Metrics) {
+    tokio::spawn(async move {
+        use std::time::Duration;
+        use sysinfo::{Pid, System};
+
+        let pid = Pid::from_u32(std::process::id());
+        let mut sys = System::new();
+
+        loop {
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+
+            if let Some(process) = sys.process(pid) {
+                let cpu = process.cpu_usage() as f64 / 100.0;
+                let mem = process.memory();
+
+                metrics.cpu_usage.record(cpu, &[]);
+                metrics.memory_usage.record(mem, &[]);
+            }
+
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    });
 }

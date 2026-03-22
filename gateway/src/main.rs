@@ -19,7 +19,7 @@ use tokio::signal;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
-use crate::middleware::telemetry::init_metrics;
+use crate::middleware::telemetry::{init_metrics, spawn_system_metrics};
 use crate::providers::anthropic::AnthropicProvider;
 use crate::providers::gemini::GeminiProvider;
 use crate::providers::mock::MockProvider;
@@ -74,6 +74,8 @@ async fn main() {
     let health_tracker = crate::routing::health::HealthTracker::new(config.circuit_breaker.clone());
 
     let metrics = init_metrics(&config.telemetry);
+    spawn_system_metrics(metrics.clone());
+
     let providers = build_providers(&config);
 
     let weights: std::collections::HashMap<String, u32> = config
