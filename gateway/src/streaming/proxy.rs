@@ -19,6 +19,7 @@ pub fn proxy_sse(
         let mut metrics = StreamMetrics::new();
         let mut event_stream = response.bytes_stream().eventsource();
         let mut errored = false;
+        let mut last_usage: Option<crate::types::Usage> = None;
 
         while let Some(event_result) = event_stream.next().await {
             match event_result {
@@ -39,6 +40,11 @@ pub fn proxy_sse(
 
                         if has_content {
                             metrics.on_token();
+                        }
+
+                        // Capture usage from the last chunk (OpenAI sends it with finish_reason)
+                        if chunk.usage.is_some() {
+                            last_usage = chunk.usage;
                         }
                     }
 
@@ -63,6 +69,12 @@ pub fn proxy_sse(
         }
         otel.record_request(&provider_name, &model, status, metrics.total_duration().as_secs_f64());
 
+        // Record token usage from the final SSE chunk
+        if let Some(usage) = &last_usage {
+            otel.record_tokens(&model, "input", u64::from(usage.prompt_tokens));
+            otel.record_tokens(&model, "output", u64::from(usage.completion_tokens));
+        }
+
         tracing::info!(
             provider = %provider_name,
             model = %model,
@@ -70,6 +82,8 @@ pub fn proxy_sse(
             ttft_ms = ?metrics.ttft().map(|d| d.as_millis()),
             tpot_ms = ?metrics.tpot().map(|d| d.as_millis()),
             tokens = metrics.token_count(),
+            input_tokens = ?last_usage.as_ref().map(|u| u.prompt_tokens),
+            output_tokens = ?last_usage.as_ref().map(|u| u.completion_tokens),
             total_ms = metrics.total_duration().as_millis(),
             "stream completed"
         );

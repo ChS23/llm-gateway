@@ -20,7 +20,9 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 use crate::middleware::telemetry::init_metrics;
+use crate::providers::anthropic::AnthropicProvider;
 use crate::providers::mock::MockProvider;
+use crate::providers::openai::OpenAiProvider;
 use crate::routes::admin;
 use crate::routing::Router as LlmRouter;
 use crate::state::AppState;
@@ -148,9 +150,35 @@ fn build_providers(config: &Config) -> Vec<Box<dyn providers::LlmProvider>> {
                 p.base_url.clone(),
                 p.models.clone(),
             )) as Box<dyn providers::LlmProvider>),
-            "openai" | "anthropic" => {
-                tracing::warn!(provider = %p.name, "real providers not yet implemented, skipping");
-                None
+            "openai" => {
+                let api_key = match &p.api_key {
+                    Some(key) => key.clone(),
+                    None => {
+                        tracing::warn!(provider = %p.name, "openai provider missing api_key, skipping");
+                        return None;
+                    }
+                };
+                Some(Box::new(OpenAiProvider::new(
+                    p.name.clone(),
+                    p.base_url.clone(),
+                    api_key,
+                    p.models.clone(),
+                )) as Box<dyn providers::LlmProvider>)
+            }
+            "anthropic" => {
+                let api_key = match &p.api_key {
+                    Some(key) => key.clone(),
+                    None => {
+                        tracing::warn!(provider = %p.name, "anthropic provider missing api_key, skipping");
+                        return None;
+                    }
+                };
+                Some(Box::new(AnthropicProvider::new(
+                    p.name.clone(),
+                    p.base_url.clone(),
+                    api_key,
+                    p.models.clone(),
+                )) as Box<dyn providers::LlmProvider>)
             }
             other => {
                 tracing::warn!(provider_type = %other, "unknown provider type, skipping");

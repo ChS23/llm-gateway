@@ -1,4 +1,6 @@
+pub mod anthropic;
 pub mod mock;
+pub mod openai;
 
 use std::future::Future;
 use std::pin::Pin;
