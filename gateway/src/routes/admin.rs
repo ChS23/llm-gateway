@@ -2,6 +2,8 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use rand::Rng;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::models::agent::{Agent, CreateAgent, UpdateAgent};
@@ -270,6 +272,113 @@ pub async fn delete_agent(
 
     if result.rows_affected() == 0 {
         return Err(GatewayError::not_found("agent not found"));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// -- API Keys -----------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+pub struct CreateApiKey {
+    pub name: String,
+    #[serde(default)]
+    pub agent_id: Option<Uuid>,
+    #[serde(default = "default_scopes")]
+    pub scopes: Vec<String>,
+    #[serde(default = "default_rate_limit")]
+    pub rate_limit_rpm: i32,
+}
+
+fn default_scopes() -> Vec<String> {
+    vec!["chat".into()]
+}
+
+fn default_rate_limit() -> i32 {
+    60
+}
+
+/// Generate a new API key. The raw key is returned ONCE — only the hash is stored.
+pub async fn create_api_key(
+    State(state): State<SharedState>,
+    Json(input): Json<CreateApiKey>,
+) -> Result<impl IntoResponse, GatewayError> {
+    let random_bytes: [u8; 16] = rand::rng().random();
+    let raw_key = format!(
+        "{}-{}",
+        state.config.auth.key_prefix,
+        hex::encode(random_bytes)
+    );
+    let key_prefix = &raw_key[..12];
+    let key_hash = hex::encode(Sha256::digest(raw_key.as_bytes()));
+    let scopes_json = serde_json::to_value(&input.scopes).unwrap();
+
+    sqlx::query(
+        r#"
+        INSERT INTO api_keys (key_prefix, key_hash, name, agent_id, scopes, rate_limit_rpm)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+    )
+    .bind(key_prefix)
+    .bind(&key_hash)
+    .bind(&input.name)
+    .bind(input.agent_id)
+    .bind(&scopes_json)
+    .bind(input.rate_limit_rpm)
+    .execute(&state.db)
+    .await
+    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "key": raw_key,
+            "key_prefix": key_prefix,
+            "name": input.name,
+            "scopes": input.scopes,
+            "warning": "save this key — it will not be shown again"
+        })),
+    ))
+}
+
+pub async fn list_api_keys(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, GatewayError> {
+    let rows = sqlx::query_as::<_, (Uuid, String, String, serde_json::Value, bool)>(
+        "SELECT id, key_prefix, name, scopes, is_active FROM api_keys ORDER BY created_at DESC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+
+    let keys: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|(id, prefix, name, scopes, active)| {
+            serde_json::json!({
+                "id": id,
+                "key_prefix": prefix,
+                "name": name,
+                "scopes": scopes,
+                "is_active": active
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!(keys)))
+}
+
+pub async fn delete_api_key(
+    State(state): State<SharedState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, GatewayError> {
+    let result = sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(GatewayError::not_found("api key not found"));
     }
 
     Ok(StatusCode::NO_CONTENT)

@@ -123,8 +123,22 @@ async fn main() {
             "/admin/agents/{id}/.well-known/agent-card.json",
             get(admin::get_agent_card),
         )
+        // API key management
+        .route("/admin/keys", post(admin::create_api_key))
+        .route("/admin/keys", get(admin::list_api_keys))
+        .route("/admin/keys/{id}", delete(admin::delete_api_key))
         // Health
         .route("/health", get(routes::health::health))
+        // Middleware: order matters — outermost runs first
+        // Rate Limit → Auth → Guardrails → handler
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::guardrails::guardrails_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::auth::auth_middleware,
+        ))
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);
 
