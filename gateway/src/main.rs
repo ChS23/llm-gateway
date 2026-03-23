@@ -44,8 +44,9 @@ async fn main() {
     let metrics = init_metrics(&config.telemetry);
     spawn_system_metrics(metrics.clone());
 
-    let otel_layer =
-        tracing_opentelemetry::layer().with_tracer(opentelemetry::global::tracer("llm-gateway"));
+    let otel_layer = tracing_opentelemetry::layer()
+        .with_tracer(opentelemetry::global::tracer("llm-gateway"))
+        .with_tracked_inactivity(false);
 
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
