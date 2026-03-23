@@ -140,11 +140,19 @@ async fn execute_request(
         span.set_attribute("gen_ai.response.model", resp.model.clone());
         span.set_attribute("gen_ai.response.id", resp.id.clone());
 
-        // Langfuse Input/Output (set after .await so span context is active)
-        if let Ok(input_json) = serde_json::to_string(&request.messages) {
-            span.set_attribute("langfuse.observation.input", input_json);
-        }
-
+        // Langfuse Input/Output
+        span.set_attribute(
+            "langfuse.observation.input",
+            serde_json::to_string(&request.messages).unwrap_or_default(),
+        );
+        span.set_attribute(
+            "langfuse.observation.output",
+            resp.choices
+                .first()
+                .and_then(|c| c.message.as_ref())
+                .and_then(|m| m.content.clone())
+                .unwrap_or_default(),
+        );
         if let Some(reason) = resp
             .choices
             .first()

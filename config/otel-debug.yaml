@@ -1,0 +1,28 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+processors:
+  batch:
+    send_batch_size: 1
+    timeout: 1s
+exporters:
+  debug:
+    verbosity: detailed
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  otlp_http/langfuse:
+    endpoint: https://cloud.langfuse.com/api/public/otel
+    headers:
+      Authorization: "Basic cGstbGYtMTVhMjU2M2YtZWRhOS00YTY0LTljZjItMjQ2M2M4MDBmZDY2OnNrLWxmLTk0ZjE3ZGI3LTc2MDYtNDc5My1iNWNmLWU2MWJiNjRhMDZlZA=="
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlp_http/langfuse]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

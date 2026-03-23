@@ -141,6 +141,7 @@ pub fn init_metrics(config: &TelemetryConfig) -> Metrics {
 
     let trace_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
         .with_resource(resource)
+        .with_sampler(opentelemetry_sdk::trace::Sampler::AlwaysOn)
         .with_batch_exporter(trace_exporter)
         .build();
 
