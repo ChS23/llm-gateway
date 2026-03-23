@@ -6,6 +6,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::response::IntoResponse;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::middleware::guardrails::scan_output;
 use crate::providers::{LlmProvider, ProviderError};
 use crate::state::SharedState;
 use crate::streaming::proxy::proxy_sse;
@@ -135,6 +136,22 @@ async fn execute_request(
         state
             .metrics
             .record_request(&provider_name, &model, 200, duration.as_secs_f64());
+
+        // Output guardrails — check response for leaked secrets
+        if let Some(content) = resp
+            .choices
+            .first()
+            .and_then(|c| c.message.as_ref())
+            .and_then(|m| m.content.as_deref())
+            && let Some(violation) = scan_output(content)
+        {
+            tracing::warn!(pattern = %violation, "output guardrail: secret in response");
+            return Err(ProviderError {
+                status: 500,
+                message: "response blocked: potential secret leak detected".into(),
+                retryable: false,
+            });
+        }
 
         let span = tracing::Span::current();
         span.set_attribute("gen_ai.response.model", resp.model.clone());

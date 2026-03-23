@@ -134,6 +134,11 @@ fn check_injection(text: &str) -> Option<&'static str> {
     }
 }
 
+/// Scan output for leaked secrets. Called from chat handler after response.
+pub fn scan_output(text: &str) -> Option<&'static str> {
+    check_secrets(text)
+}
+
 fn check_secrets(text: &str) -> Option<&'static str> {
     let patterns = secret_patterns();
     let matches: Vec<usize> = patterns.matches(text).into_iter().collect();

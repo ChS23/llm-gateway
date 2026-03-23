@@ -16,6 +16,10 @@ impl LatencyTracker {
         Self { redis }
     }
 
+    pub fn redis(&self) -> &Client {
+        &self.redis
+    }
+
     /// Record a latency observation for a provider.
     /// Updates both the sliding window (for percentiles) and the EMA (for routing).
     pub async fn record(&self, provider: &str, latency_ms: f64) {
