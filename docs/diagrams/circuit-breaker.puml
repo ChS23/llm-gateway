@@ -1,0 +1,30 @@
+@startuml circuit-breaker
+!theme plain
+skinparam backgroundColor white
+
+title Circuit Breaker — Состояния провайдера
+
+state "CLOSED\n(здоров)" as Closed {
+    Closed : consecutive_failures < threshold
+    Closed : все запросы проходят
+}
+
+state "OPEN\n(нездоров)" as Open {
+    Open : провайдер исключён из пула
+    Open : запросы не отправляются
+    Open : cooldown = 30 секунд
+}
+
+state "HALF-OPEN\n(проба)" as HalfOpen {
+    HalfOpen : пропускаем probe-запросы
+    HalfOpen : max 3 проб
+}
+
+[*] --> Closed
+
+Closed --> Open : 5 consecutive\nfailures
+Open --> HalfOpen : cooldown\nистёк (30s)
+HalfOpen --> Closed : 3 success\nprobes
+HalfOpen --> Open : failure\nв probe
+
+@enduml

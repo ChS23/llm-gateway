@@ -1,0 +1,69 @@
+@startuml architecture
+!theme plain
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+
+title LLM Gateway — Архитектура системы
+
+actor "Клиент\n(curl / агент / k6)" as Client
+
+package "llm-gateway (Rust / axum)" {
+    component "Rate Limit\n(per-key RPM)" as RateLimit
+    component "Auth\n(sk-gw-... → sha256)" as Auth
+    component "Guardrails\n(RegexSet: injection + secrets)" as Guard
+    component "Router + LB\nround-robin / weighted /\nlatency / least-conn /\nhealth-aware" as Router
+    component "SSE Proxy\nTTFT / TPOT / tokens" as SSE
+    component "Admin API\nProviders / Agents / Keys" as Admin
+
+    database "AppState\n(ArcSwap<Router>)" as State
+}
+
+database "PostgreSQL" as PG {
+    collections "providers"
+    collections "agents (A2A)"
+    collections "api_keys"
+}
+
+database "Redis" as Redis {
+    collections "latency EMA"
+    collections "rate limits"
+    collections "sliding window"
+}
+
+cloud "LLM Providers" as LLM {
+    component "OpenAI\n/v1/chat/completions" as OAI
+    component "OpenAI Responses\n/v1/responses" as OAIR
+    component "Anthropic\n/v1/messages" as ANT
+    component "Gemini\ngenerateContent" as GEM
+    component "Mock Provider\n(configurable)" as Mock
+}
+
+package "Observability" {
+    component "OTel Collector\nOTLP gRPC" as OTEL
+    component "Prometheus" as Prom
+    component "Grafana\n(10 панелей)" as Graf
+    component "Langfuse Cloud\n(traces + GenAI)" as LF
+}
+
+Client --> RateLimit : POST /v1/chat/completions
+RateLimit --> Auth
+Auth --> Guard
+Guard --> Router
+Router --> SSE
+SSE --> LLM
+
+Client --> Admin : /admin/*
+
+Admin --> PG
+Router --> Redis : latency EMA
+Auth --> Redis : rate limit
+Router --> State
+Admin ..> State : hot reload
+
+SSE --> OTEL : metrics + traces
+OTEL --> Prom : metrics
+OTEL --> LF : traces
+Prom --> Graf
+
+@enduml

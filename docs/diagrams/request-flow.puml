@@ -1,0 +1,54 @@
+@startuml request-flow
+!theme plain
+skinparam backgroundColor white
+
+title Поток запроса — JSON и SSE Streaming
+
+participant "Клиент" as C
+participant "Auth\nMiddleware" as Auth
+participant "Guardrails" as GR
+participant "Router" as R
+participant "Provider\n(Mock/OpenAI/...)" as P
+participant "SSE Proxy" as SSE
+participant "OTel\nCollector" as OT
+
+== JSON Mode (stream=false) ==
+
+C -> Auth : POST /v1/chat/completions\nAuthorization: Bearer sk-gw-...
+Auth -> Auth : sha256(key) → DB lookup\n+ scope check + rate limit
+Auth -> GR : request
+GR -> GR : RegexSet scan\n(injection + secrets)
+GR -> R : clean request
+R -> R : resolve(model)\nhealth filter → strategy
+R -> P : reqwest POST (timeout 30s)
+P --> R : JSON response
+R -> R : record latency (Redis EMA)\nrecord health (circuit breaker)
+R -> OT : metrics + trace span
+R --> C : 200 OK + ChatResponse
+
+== SSE Streaming Mode (stream=true) ==
+
+C -> Auth : POST /v1/chat/completions\nstream: true
+Auth -> GR : (same pipeline)
+GR -> R : clean request
+R -> P : reqwest POST (read timeout 120s)
+P --> SSE : HTTP 200 + SSE byte stream
+
+loop каждый SSE chunk
+    SSE -> SSE : parse event\ntrack TTFT/TPOT
+    SSE --> C : data: {chunk JSON}
+end
+
+SSE --> C : data: [DONE]
+SSE -> OT : TTFT + TPOT + tokens + cost
+
+== Failover ==
+
+R -> P : request
+P --> R : 5xx / timeout
+R -> R : health.record_failure()\ncircuit breaker check
+R -> P : failover → другой provider
+P --> R : success
+R --> C : response
+
+@enduml
