@@ -93,6 +93,16 @@ impl GatewayError {
         }
     }
 
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: ErrorBody {
+                message: message.into(),
+                error_type: "internal_error".into(),
+            },
+        }
+    }
+
     pub fn provider_error(status: u16, message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),

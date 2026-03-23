@@ -118,6 +118,29 @@ impl HealthTracker {
 
     pub fn is_available(&self, provider: &str) -> bool {
         self.ensure_circuit(provider);
+
+        // Fast path: read lock only — Closed and HalfOpen don't need mutation
+        {
+            let circuits = self.circuits.read().unwrap();
+            if let Some(c) = circuits.get(provider) {
+                match c.state {
+                    CircuitState::Closed | CircuitState::HalfOpen => return true,
+                    CircuitState::Open => {
+                        // Check if cooldown has NOT elapsed — still unavailable
+                        if let Some(last) = c.last_failure_at {
+                            if last.elapsed() < c.cooldown {
+                                return false;
+                            }
+                        } else {
+                            return false;
+                        }
+                        // Cooldown elapsed — fall through to write lock for state transition
+                    }
+                }
+            }
+        }
+
+        // Slow path: write lock to transition Open → HalfOpen
         let mut circuits = self.circuits.write().unwrap();
         circuits
             .get_mut(provider)

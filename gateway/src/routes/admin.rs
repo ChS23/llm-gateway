@@ -44,7 +44,7 @@ pub async fn create_provider(
     .bind(input.weight)
     .fetch_one(&state.db)
     .await
-    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+    .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     reload_router(&state).await;
     Ok((StatusCode::CREATED, Json(provider)))
@@ -58,7 +58,7 @@ pub async fn list_providers(
     )
     .fetch_all(&state.db)
     .await
-    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+    .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     Ok(Json(providers))
 }
@@ -71,7 +71,7 @@ pub async fn get_provider(
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?
+        .map_err(|e| GatewayError::internal(e.to_string()))?
         .ok_or_else(|| GatewayError::not_found("provider not found"))?;
 
     Ok(Json(provider))
@@ -114,7 +114,7 @@ pub async fn update_provider(
     .bind(input.is_active)
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?
+    .map_err(|e| GatewayError::internal(e.to_string()))?
     .ok_or_else(|| GatewayError::not_found("provider not found"))?;
 
     reload_router(&state).await;
@@ -130,7 +130,7 @@ pub async fn delete_provider(
             .bind(id)
             .execute(&state.db)
             .await
-            .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+            .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     if result.rows_affected() == 0 {
         return Err(GatewayError::not_found("provider not found"));
@@ -178,7 +178,7 @@ pub async fn create_agent(
     .bind(&card_json)
     .fetch_one(&state.db)
     .await
-    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+    .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     Ok((StatusCode::CREATED, Json(agent)))
 }
@@ -190,7 +190,7 @@ pub async fn list_agents(
         sqlx::query_as::<_, Agent>("SELECT * FROM agents WHERE is_active = true ORDER BY name")
             .fetch_all(&state.db)
             .await
-            .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+            .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     Ok(Json(agents))
 }
@@ -203,7 +203,7 @@ pub async fn get_agent(
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?
+        .map_err(|e| GatewayError::internal(e.to_string()))?
         .ok_or_else(|| GatewayError::not_found("agent not found"))?;
 
     Ok(Json(agent))
@@ -219,7 +219,7 @@ pub async fn get_agent_card(
             .bind(id)
             .fetch_optional(&state.db)
             .await
-            .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+            .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     let (card_json,) = card.ok_or_else(|| GatewayError::not_found("agent not found"))?;
     Ok(Json(card_json))
@@ -262,7 +262,7 @@ pub async fn update_agent(
     .bind(input.is_active)
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?
+    .map_err(|e| GatewayError::internal(e.to_string()))?
     .ok_or_else(|| GatewayError::not_found("agent not found"))?;
 
     Ok(Json(agent))
@@ -277,7 +277,7 @@ pub async fn delete_agent(
             .bind(id)
             .execute(&state.db)
             .await
-            .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+            .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     if result.rows_affected() == 0 {
         return Err(GatewayError::not_found("agent not found"));
@@ -336,7 +336,7 @@ pub async fn create_api_key(
     .bind(input.rate_limit_rpm)
     .execute(&state.db)
     .await
-    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+    .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     Ok((
         StatusCode::CREATED,
@@ -358,7 +358,7 @@ pub async fn list_api_keys(
     )
     .fetch_all(&state.db)
     .await
-    .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+    .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     let keys: Vec<serde_json::Value> = rows
         .into_iter()
@@ -384,7 +384,7 @@ pub async fn delete_api_key(
         .bind(id)
         .execute(&state.db)
         .await
-        .map_err(|e| GatewayError::bad_request("db_error", e.to_string()))?;
+        .map_err(|e| GatewayError::internal(e.to_string()))?;
 
     if result.rows_affected() == 0 {
         return Err(GatewayError::not_found("api key not found"));

@@ -178,16 +178,6 @@ async fn execute_request(
             span.set_attribute("gen_ai.response.finish_reasons", reason.to_string());
         }
 
-        // Langfuse Output field
-        if let Some(content) = resp
-            .choices
-            .first()
-            .and_then(|c| c.message.as_ref())
-            .and_then(|m| m.content.as_deref())
-        {
-            span.set_attribute("langfuse.observation.output", content.to_string());
-        }
-
         if let Some(ref usage) = resp.usage {
             state
                 .metrics

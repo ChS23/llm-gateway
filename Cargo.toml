@@ -21,7 +21,7 @@ tracing-opentelemetry = "0.32"
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid", "chrono", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-fred = "10"
+fred = { version = "10", features = ["i-scripts"] }
 sha2 = "0.10"
 hex = "0.4"
 rand = "0.9"

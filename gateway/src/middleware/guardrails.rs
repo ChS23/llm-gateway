@@ -38,8 +38,6 @@ fn secret_patterns() -> &'static RegexSet {
             r"sk-[A-Za-z0-9]{48,}",
             // Private key headers
             r"-----BEGIN\s+(RSA\s+|EC\s+)?PRIVATE\s+KEY-----",
-            // Generic high-entropy base64 blocks (>40 chars)
-            r"[A-Za-z0-9+/]{40,}={0,2}",
         ])
         .expect("invalid secret regex patterns")
     })
@@ -150,7 +148,6 @@ fn check_secrets(text: &str) -> Option<&'static str> {
             1 => "GitHub token",
             2 => "OpenAI key",
             3 => "private key",
-            4 => "high-entropy secret",
             _ => "unknown secret pattern",
         })
     }

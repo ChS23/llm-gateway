@@ -185,7 +185,11 @@ impl Router {
 
     pub fn release(&self, provider_idx: usize) {
         if provider_idx < self.in_flight.len() {
-            self.in_flight[provider_idx].fetch_sub(1, Ordering::Relaxed);
+            let _ = self.in_flight[provider_idx].fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |current| current.checked_sub(1),
+            );
         }
     }
 

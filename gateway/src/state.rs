@@ -63,10 +63,11 @@ impl AppState {
                     )));
                 }
                 other => {
-                    tracing::debug!(
+                    tracing::warn!(
                         provider_type = %other,
                         name = %row.name,
-                        "skipping DB provider (only mock supported for dynamic registration)"
+                        "skipping DB provider: non-mock providers require API keys configured \
+                         in gateway.toml (not stored in DB for security)"
                     );
                     continue;
                 }

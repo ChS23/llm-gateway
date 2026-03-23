@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::{LlmProvider, ProviderError};
+use super::{LlmProvider, ProviderError, check_provider_response, map_reqwest_err};
 use crate::types::{ChatRequest, ChatResponse, Choice, DeltaMessage, Usage};
 
 /// OpenAI Responses API provider (`POST /v1/responses`).
@@ -160,27 +160,6 @@ impl OpenAiResponsesProvider {
     }
 }
 
-fn map_err(e: reqwest::Error) -> ProviderError {
-    ProviderError {
-        status: 502,
-        message: format!("request failed: {e}"),
-        retryable: true,
-    }
-}
-
-async fn check_response(resp: reqwest::Response) -> Result<reqwest::Response, ProviderError> {
-    if resp.status().is_success() {
-        return Ok(resp);
-    }
-    let status = resp.status().as_u16();
-    let body = resp.text().await.unwrap_or_default();
-    Err(ProviderError {
-        status,
-        message: body,
-        retryable: matches!(status, 429 | 500..=504),
-    })
-}
-
 impl LlmProvider for OpenAiResponsesProvider {
     fn name(&self) -> &str {
         &self.name
@@ -203,9 +182,9 @@ impl LlmProvider for OpenAiResponsesProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(map_err)?;
+                .map_err(map_reqwest_err)?;
 
-            let resp = check_response(resp).await?;
+            let resp = check_provider_response(resp, &[]).await?;
 
             let responses_resp: ResponsesResponse =
                 resp.json().await.map_err(|e| ProviderError {
@@ -234,9 +213,9 @@ impl LlmProvider for OpenAiResponsesProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(map_err)?;
+                .map_err(map_reqwest_err)?;
 
-            check_response(resp).await
+            check_provider_response(resp, &[]).await
         })
     }
 }

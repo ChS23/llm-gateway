@@ -111,6 +111,35 @@ async fn main() {
         latency: latency_tracker,
     });
 
+    // Bootstrap admin API key from env var (if set and not already in DB)
+    if let Ok(admin_key) = std::env::var("ADMIN_API_KEY")
+        && !admin_key.is_empty()
+    {
+        use sha2::Digest;
+        let key_hash = hex::encode(sha2::Sha256::digest(admin_key.as_bytes()));
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM api_keys WHERE key_hash = $1)")
+                .bind(&key_hash)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(false);
+
+        if !exists {
+            let key_prefix = &admin_key[..admin_key.len().min(12)];
+            let scopes = serde_json::json!(["admin", "chat"]);
+            let _ = sqlx::query(
+                "INSERT INTO api_keys (key_prefix, key_hash, name, scopes, rate_limit_rpm) \
+                     VALUES ($1, $2, 'bootstrap-admin', $3, 0)",
+            )
+            .bind(key_prefix)
+            .bind(&key_hash)
+            .bind(&scopes)
+            .execute(&state.db)
+            .await;
+            tracing::info!("bootstrap admin API key inserted from ADMIN_API_KEY env var");
+        }
+    }
+
     // Reload router from DB (merges TOML + DB providers)
     if let Err(e) = state.reload_router().await {
         tracing::warn!(error = %e, "initial router reload from DB failed, using TOML config");
@@ -128,7 +157,7 @@ async fn main() {
             crate::middleware::auth::auth_middleware,
         ));
 
-    // Admin routes (no auth)
+    // Admin routes (auth required — bootstrap via ADMIN_API_KEY env var)
     let admin_routes = Router::new()
         .route("/admin/providers", post(admin::create_provider))
         .route("/admin/providers", get(admin::list_providers))
@@ -146,7 +175,11 @@ async fn main() {
         )
         .route("/admin/keys", post(admin::create_api_key))
         .route("/admin/keys", get(admin::list_api_keys))
-        .route("/admin/keys/{id}", delete(admin::delete_api_key));
+        .route("/admin/keys/{id}", delete(admin::delete_api_key))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::auth::auth_middleware,
+        ));
 
     let app = Router::new()
         .merge(api_routes)

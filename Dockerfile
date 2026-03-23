@@ -20,7 +20,6 @@ COPY gateway/src gateway/src
 COPY mock-provider/src mock-provider/src
 COPY loadtest/src loadtest/src
 COPY migrations migrations
-
 RUN touch gateway/src/main.rs mock-provider/src/main.rs loadtest/src/main.rs \
     && cargo build --release --workspace
 

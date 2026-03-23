@@ -5,7 +5,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
 
-use fred::prelude::*;
+use fred::interfaces::LuaInterface;
 
 use crate::state::SharedState;
 
@@ -80,7 +80,7 @@ pub async fn auth_middleware(
             .into_response();
     }
 
-    // Per-key rate limiting via Redis sliding window
+    // Per-key rate limiting via Redis sliding window (atomic Lua script)
     if let Some(rpm) = key.rate_limit_rpm
         && rpm > 0
         && let Some(ref tracker) = state.latency
@@ -90,22 +90,23 @@ pub async fn auth_middleware(
         let now = chrono::Utc::now().timestamp();
         let window_start = now - 60;
 
-        let _: Result<(), _> = redis
-            .zremrangebyscore(&rate_key, f64::NEG_INFINITY, window_start as f64)
-            .await;
-        let _: Result<(), _> = redis
-            .zadd(
-                &rate_key,
-                None,
-                None,
-                false,
-                false,
-                (now as f64, format!("{now}")),
-            )
-            .await;
-        let _: Result<(), _> = redis.expire(&rate_key, 120, None).await;
+        // Atomic: ZREMRANGEBYSCORE + ZADD + EXPIRE + ZCARD in one round-trip
+        let lua = r#"
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+            redis.call('ZADD', KEYS[1], ARGV[2], ARGV[3])
+            redis.call('EXPIRE', KEYS[1], 120)
+            return redis.call('ZCARD', KEYS[1])
+        "#;
 
-        let count: i64 = redis.zcard(&rate_key).await.unwrap_or(0);
+        let count: i64 = redis
+            .eval(
+                lua,
+                vec![rate_key],
+                vec![window_start.to_string(), now.to_string(), now.to_string()],
+            )
+            .await
+            .unwrap_or(0);
+
         if count > i64::from(rpm) {
             return (
                 StatusCode::TOO_MANY_REQUESTS,

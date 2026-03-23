@@ -45,3 +45,31 @@ impl std::fmt::Display for ProviderError {
 }
 
 impl std::error::Error for ProviderError {}
+
+/// Shared helper: map reqwest transport errors to ProviderError.
+pub fn map_reqwest_err(e: reqwest::Error) -> ProviderError {
+    ProviderError {
+        status: 502,
+        message: format!("request failed: {e}"),
+        retryable: true,
+    }
+}
+
+/// Shared helper: check HTTP response status, returning ProviderError for non-success.
+/// `extra_retryable` allows providers to add custom retryable status codes (e.g., Anthropic 529).
+pub async fn check_provider_response(
+    resp: reqwest::Response,
+    extra_retryable: &[u16],
+) -> Result<reqwest::Response, ProviderError> {
+    if resp.status().is_success() {
+        return Ok(resp);
+    }
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    let retryable = matches!(status, 429 | 500..=504) || extra_retryable.contains(&status);
+    Err(ProviderError {
+        status,
+        message: body,
+        retryable,
+    })
+}
