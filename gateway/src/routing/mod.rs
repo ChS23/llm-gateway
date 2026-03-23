@@ -408,4 +408,45 @@ mod tests {
         let failover = router.failover("gpt", "a").unwrap();
         assert_eq!(failover.name(), "b");
     }
+
+    #[test]
+    fn test_cost_calculation() {
+        let mut costs = HashMap::new();
+        costs.insert(
+            "a".to_string(),
+            CostRate {
+                input: 0.001,
+                output: 0.002,
+            },
+        );
+
+        let router = Router::new(
+            make_providers(),
+            &HashMap::new(),
+            &costs,
+            RoutingStrategy::RoundRobin,
+            make_health(),
+            None,
+        );
+
+        let idx = router.provider_index("a").unwrap();
+        let cost = router.compute_cost(idx, 100, 50);
+        // 100 * 0.001 + 50 * 0.002 = 0.1 + 0.1 = 0.2
+        assert!((cost - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_cost_default_zero() {
+        let router = Router::new(
+            make_providers(),
+            &HashMap::new(),
+            &HashMap::new(),
+            RoutingStrategy::RoundRobin,
+            make_health(),
+            None,
+        );
+
+        let idx = router.provider_index("a").unwrap();
+        assert_eq!(router.compute_cost(idx, 100, 50), 0.0);
+    }
 }

@@ -149,3 +149,103 @@ impl HealthTracker {
             .unwrap_or(CircuitState::Closed)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::CircuitBreakerConfig;
+
+    fn config() -> CircuitBreakerConfig {
+        CircuitBreakerConfig {
+            failure_threshold: 3,
+            cooldown_seconds: 1,
+            half_open_max_requests: 2,
+        }
+    }
+
+    #[test]
+    fn test_new_provider_is_available() {
+        let tracker = HealthTracker::new(config());
+        assert!(tracker.is_available("new-provider"));
+        assert_eq!(tracker.state("new-provider"), CircuitState::Closed);
+    }
+
+    #[test]
+    fn test_opens_after_threshold() {
+        let tracker = HealthTracker::new(config());
+        tracker.record_failure("p");
+        tracker.record_failure("p");
+        assert_eq!(tracker.state("p"), CircuitState::Closed); // 2 < 3
+        tracker.record_failure("p");
+        assert_eq!(tracker.state("p"), CircuitState::Open); // 3 >= 3
+        assert!(!tracker.is_available("p"));
+    }
+
+    #[test]
+    fn test_success_resets_failures() {
+        let tracker = HealthTracker::new(config());
+        tracker.record_failure("p");
+        tracker.record_failure("p");
+        tracker.record_success("p");
+        tracker.record_failure("p"); // only 1 consecutive now
+        assert_eq!(tracker.state("p"), CircuitState::Closed);
+    }
+
+    #[test]
+    fn test_half_open_after_cooldown() {
+        let tracker = HealthTracker::new(CircuitBreakerConfig {
+            failure_threshold: 1,
+            cooldown_seconds: 0, // instant cooldown
+            half_open_max_requests: 2,
+        });
+        tracker.record_failure("p");
+        assert_eq!(tracker.state("p"), CircuitState::Open);
+
+        // is_available triggers transition to HalfOpen after cooldown
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        assert!(tracker.is_available("p"));
+        assert_eq!(tracker.state("p"), CircuitState::HalfOpen);
+    }
+
+    #[test]
+    fn test_half_open_closes_after_successes() {
+        let tracker = HealthTracker::new(CircuitBreakerConfig {
+            failure_threshold: 1,
+            cooldown_seconds: 0,
+            half_open_max_requests: 2,
+        });
+        tracker.record_failure("p");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tracker.is_available("p"); // → HalfOpen
+
+        tracker.record_success("p");
+        assert_eq!(tracker.state("p"), CircuitState::HalfOpen);
+        tracker.record_success("p");
+        assert_eq!(tracker.state("p"), CircuitState::Closed); // 2 successes
+    }
+
+    #[test]
+    fn test_half_open_reopens_on_failure() {
+        let tracker = HealthTracker::new(CircuitBreakerConfig {
+            failure_threshold: 1,
+            cooldown_seconds: 0,
+            half_open_max_requests: 3,
+        });
+        tracker.record_failure("p");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tracker.is_available("p"); // → HalfOpen
+
+        tracker.record_failure("p"); // fail in half-open → re-open
+        assert_eq!(tracker.state("p"), CircuitState::Open);
+    }
+
+    #[test]
+    fn test_independent_providers() {
+        let tracker = HealthTracker::new(config());
+        tracker.record_failure("a");
+        tracker.record_failure("a");
+        tracker.record_failure("a"); // a → Open
+        assert!(!tracker.is_available("a"));
+        assert!(tracker.is_available("b")); // b unaffected
+    }
+}

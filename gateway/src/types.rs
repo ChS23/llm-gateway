@@ -109,3 +109,95 @@ impl IntoResponse for GatewayError {
         (self.status, axum::Json(&self)).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_request_deserialization() {
+        let json = r#"{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"stream":true,"temperature":0.7}"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.model, "gpt-4");
+        assert!(req.stream);
+        assert_eq!(req.messages.len(), 1);
+        assert_eq!(req.messages[0].role, "user");
+        assert!(req.extra.contains_key("temperature"));
+    }
+
+    #[test]
+    fn test_chat_request_defaults() {
+        let json = r#"{"model":"x","messages":[{"role":"user","content":"y"}]}"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.stream);
+        assert!(req.extra.is_empty());
+    }
+
+    #[test]
+    fn test_chat_response_serialization() {
+        let resp = ChatResponse {
+            id: "test-1".into(),
+            object: "chat.completion".into(),
+            model: "gpt-4".into(),
+            choices: vec![Choice {
+                index: 0,
+                message: Some(DeltaMessage {
+                    role: Some("assistant".into()),
+                    content: Some("hello".into()),
+                }),
+                delta: None,
+                finish_reason: Some("stop".into()),
+            }],
+            usage: Some(Usage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }),
+            extra: serde_json::Map::new(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"id\":\"test-1\""));
+        assert!(json.contains("\"total_tokens\":15"));
+    }
+
+    #[test]
+    fn test_delta_message_skip_none() {
+        let delta = DeltaMessage {
+            role: None,
+            content: Some("token".into()),
+        };
+        let json = serde_json::to_string(&delta).unwrap();
+        assert!(!json.contains("role"));
+        assert!(json.contains("\"content\":\"token\""));
+    }
+
+    #[test]
+    fn test_gateway_error_bad_request() {
+        let err = GatewayError::bad_request("test_type", "test message");
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.error.error_type, "test_type");
+    }
+
+    #[test]
+    fn test_gateway_error_not_found() {
+        let err = GatewayError::not_found("missing");
+        assert_eq!(err.status, StatusCode::NOT_FOUND);
+        assert_eq!(err.error.error_type, "not_found");
+    }
+
+    #[test]
+    fn test_gateway_error_provider_invalid_status() {
+        // 99 is below 100, invalid for HTTP status
+        let err = GatewayError::provider_error(99, "bad");
+        assert_eq!(err.status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn test_gateway_error_serialization() {
+        let err = GatewayError::bad_request("inv", "msg");
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"type\":\"inv\""));
+        assert!(json.contains("\"message\":\"msg\""));
+        assert!(!json.contains("status")); // status is skip
+    }
+}
