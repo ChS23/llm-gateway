@@ -186,6 +186,7 @@ async fn main() {
         .merge(api_routes)
         .merge(admin_routes)
         .route("/health", get(routes::health::health))
+        .route("/health/providers", get(routes::health::provider_health))
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);
 
