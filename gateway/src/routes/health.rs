@@ -3,14 +3,21 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use fred::prelude::*;
+use utoipa::ToSchema;
 
 use crate::state::SharedState;
 
-#[derive(serde::Serialize)]
+/// Gateway health status.
+#[derive(serde::Serialize, ToSchema)]
+#[schema(example = json!({"status": "healthy", "postgres": "ok", "redis": "ok", "uptime_secs": 3600}))]
 struct HealthResponse {
+    /// Overall status: `healthy` or `degraded`.
     status: &'static str,
+    /// Postgres connectivity: `ok` or `down`.
     postgres: &'static str,
+    /// Redis connectivity: `ok`, `down`, or `not_configured`.
     redis: &'static str,
+    /// Seconds since gateway started.
     uptime_secs: u64,
 }
 
@@ -18,6 +25,17 @@ static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock
 
 /// Liveness/readiness check — verifies gateway's own dependencies.
 /// Returns 200 if all OK, 503 if degraded.
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "Health",
+    summary = "Gateway health check",
+    description = "Checks Postgres and Redis connectivity. Returns 200 when healthy, 503 when degraded.",
+    responses(
+        (status = 200, description = "All dependencies healthy", body = HealthResponse),
+        (status = 503, description = "One or more dependencies down", body = HealthResponse),
+    )
+)]
 pub async fn health(State(state): State<SharedState>) -> impl IntoResponse {
     let start = START_TIME.get_or_init(std::time::Instant::now);
 
@@ -58,6 +76,17 @@ pub async fn health(State(state): State<SharedState>) -> impl IntoResponse {
 }
 
 /// Provider health — separate from gateway liveness.
+#[utoipa::path(
+    get,
+    path = "/health/providers",
+    tag = "Health",
+    summary = "Provider health status",
+    description = "Returns circuit breaker state for each registered provider: `healthy`, `circuit_open`, or `half_open`.",
+    responses(
+        (status = 200, description = "Provider health map", body = Object,
+         example = json!({"openai-primary": "healthy", "anthropic-primary": "circuit_open"})),
+    )
+)]
 pub async fn provider_health(State(state): State<SharedState>) -> Json<serde_json::Value> {
     let router = state.router();
     let mut providers = serde_json::Map::new();

@@ -18,6 +18,8 @@ use axum::routing::{delete, get, post, put};
 use sqlx::postgres::PgPoolOptions;
 use tokio::signal;
 use tracing_subscriber::EnvFilter;
+use utoipa::OpenApi;
+use utoipa_scalar::{Scalar, Servable};
 
 use crate::config::{Config, ProviderConfig};
 use crate::middleware::telemetry::{init_metrics, spawn_system_metrics};
@@ -29,6 +31,90 @@ use crate::providers::openai_responses::OpenAiResponsesProvider;
 use crate::routes::admin;
 use crate::routing::Router as LlmRouter;
 use crate::state::AppState;
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "LLM Gateway API",
+        description = "Multi-provider LLM gateway — proxies OpenAI-compatible chat completion \
+                       requests to multiple backends (OpenAI, Anthropic, Gemini, Mock) with \
+                       SSE streaming, smart routing, failover, observability, guardrails, \
+                       and an A2A agent registry.",
+        version = "1.0.0",
+        contact(name = "LLM Gateway", url = "https://github.com/chs/llm-gateway"),
+        license(name = "MIT")
+    ),
+    servers(
+        (url = "/", description = "Current server")
+    ),
+    tags(
+        (name = "LLM Proxy", description = "OpenAI-compatible chat completion endpoint"),
+        (name = "Health", description = "Gateway and provider health checks"),
+        (name = "Providers", description = "CRUD for LLM provider backends"),
+        (name = "Agents", description = "A2A agent registry (Agent Cards, skills, discovery)"),
+        (name = "API Keys", description = "API key lifecycle management"),
+    ),
+    paths(
+        routes::chat::chat_completions,
+        routes::health::health,
+        routes::health::provider_health,
+        routes::admin::create_provider,
+        routes::admin::list_providers,
+        routes::admin::get_provider,
+        routes::admin::update_provider,
+        routes::admin::delete_provider,
+        routes::admin::create_agent,
+        routes::admin::list_agents,
+        routes::admin::get_agent,
+        routes::admin::get_agent_card,
+        routes::admin::update_agent,
+        routes::admin::delete_agent,
+        routes::admin::create_api_key,
+        routes::admin::list_api_keys,
+        routes::admin::delete_api_key,
+    ),
+    components(
+        schemas(
+            types::ChatRequest,
+            types::RequestMessage,
+            types::DeltaMessage,
+            types::ChatResponse,
+            types::Choice,
+            types::Usage,
+            types::GatewayError,
+            types::ErrorBody,
+            models::provider::Provider,
+            models::provider::CreateProvider,
+            models::provider::UpdateProvider,
+            models::agent::Agent,
+            models::agent::CreateAgent,
+            models::agent::UpdateAgent,
+            routes::admin::CreateApiKey,
+        )
+    ),
+    security(
+        ("bearer" = [])
+    ),
+    modifiers(&SecurityAddon),
+)]
+struct ApiDoc;
+
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "bearer",
+                utoipa::openapi::security::SecurityScheme::Http(
+                    utoipa::openapi::security::Http::new(
+                        utoipa::openapi::security::HttpAuthScheme::Bearer,
+                    ),
+                ),
+            );
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -187,6 +273,11 @@ async fn main() {
         .merge(admin_routes)
         .route("/health", get(routes::health::health))
         .route("/health/providers", get(routes::health::provider_health))
+        .merge(Scalar::with_url("/scalar", ApiDoc::openapi()))
+        .route(
+            "/openapi.json",
+            get(|| async { axum::Json(ApiDoc::openapi()) }),
+        )
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state);
 

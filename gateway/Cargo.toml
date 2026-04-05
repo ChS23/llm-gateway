@@ -30,6 +30,8 @@ regex.workspace = true
 sysinfo.workspace = true
 arc-swap.workspace = true
 dashmap.workspace = true
+utoipa.workspace = true
+utoipa-scalar.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

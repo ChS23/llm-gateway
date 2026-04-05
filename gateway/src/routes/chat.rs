@@ -10,8 +10,30 @@ use crate::middleware::guardrails::scan_output;
 use crate::providers::{LlmProvider, ProviderError};
 use crate::state::SharedState;
 use crate::streaming::proxy::proxy_sse;
-use crate::types::{ChatRequest, GatewayError};
+use crate::types::{ChatRequest, ChatResponse, GatewayError};
 
+/// Send a chat completion request through the gateway.
+///
+/// The gateway resolves the model to a provider, proxies the request, and returns
+/// an OpenAI-compatible response. Supports both streaming (SSE) and non-streaming modes.
+/// Failover is automatic when the primary provider is unhealthy.
+#[utoipa::path(
+    post,
+    path = "/v1/chat/completions",
+    tag = "LLM Proxy",
+    summary = "Chat completion (OpenAI-compatible)",
+    description = "Proxy a chat completion request to the best available provider. \
+                   Supports streaming via `stream: true`.",
+    request_body(content = ChatRequest, description = "OpenAI-compatible chat completion request"),
+    responses(
+        (status = 200, description = "Successful completion", body = ChatResponse),
+        (status = 400, description = "Invalid request (bad JSON, unknown model)", body = GatewayError),
+        (status = 401, description = "Missing or invalid API key", body = GatewayError),
+        (status = 429, description = "Rate limit exceeded", body = GatewayError),
+        (status = 502, description = "All providers failed", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 #[tracing::instrument(name = "chat", skip_all)]
 pub async fn chat_completions(
     State(state): State<SharedState>,

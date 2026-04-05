@@ -1,73 +1,118 @@
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// OpenAI-compatible chat completion request.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": false,
+    "temperature": 0.7
+}))]
 pub struct ChatRequest {
+    /// Model identifier (e.g. `gpt-4`, `claude-sonnet-4-20250514`, `mock-model`).
+    #[schema(example = "gpt-4")]
     pub model: String,
+    /// Conversation messages.
     pub messages: Vec<RequestMessage>,
+    /// Enable Server-Sent Events streaming.
     #[serde(default)]
+    #[schema(default = false)]
     pub stream: bool,
     /// Forward unknown fields (temperature, max_tokens, etc.) as-is to provider.
     #[serde(flatten)]
+    #[schema(additional_properties)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Request message — role is required per OpenAI spec.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({"role": "user", "content": "Hello!"}))]
 pub struct RequestMessage {
+    /// Message role: `system`, `user`, or `assistant`.
+    #[schema(example = "user")]
     pub role: String,
+    /// Message content.
+    #[schema(example = "Hello!")]
     pub content: String,
 }
 
 /// Response/delta message — all fields optional (SSE chunks send partial data).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeltaMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "assistant")]
     pub role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "Hello! How can I help you today?")]
     pub content: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// OpenAI-compatible chat completion response.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChatResponse {
+    /// Unique response identifier.
+    #[schema(example = "chatcmpl-abc123")]
     pub id: String,
+    /// Object type — always `chat.completion` or `chat.completion.chunk`.
+    #[schema(example = "chat.completion")]
     pub object: String,
+    /// Model that generated the response.
+    #[schema(example = "gpt-4")]
     pub model: String,
+    /// Response choices.
     pub choices: Vec<Choice>,
+    /// Token usage statistics (absent in streaming chunks).
     #[serde(default)]
     pub usage: Option<Usage>,
     #[serde(flatten)]
+    #[schema(additional_properties)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A single completion choice.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Choice {
+    /// Choice index.
     pub index: u32,
+    /// Full message (non-streaming response).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<DeltaMessage>,
+    /// Partial delta (streaming response).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delta: Option<DeltaMessage>,
+    /// Reason the model stopped generating: `stop`, `length`, etc.
+    #[schema(example = "stop")]
     pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Token usage statistics.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({"prompt_tokens": 10, "completion_tokens": 25, "total_tokens": 35}))]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
 
-#[derive(Debug, Serialize)]
+/// Structured error returned by the gateway.
+#[derive(Debug, Serialize, ToSchema)]
 pub struct GatewayError {
     #[serde(skip)]
+    #[schema(ignore)]
     pub status: StatusCode,
     pub error: ErrorBody,
 }
 
-#[derive(Debug, Serialize)]
+/// Error details.
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({"message": "model 'foo' not found", "type": "invalid_model"}))]
 pub struct ErrorBody {
+    /// Human-readable error message.
     pub message: String,
+    /// Error type code.
     #[serde(rename = "type")]
     pub error_type: String,
 }

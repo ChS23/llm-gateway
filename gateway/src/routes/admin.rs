@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use rand::Rng;
 use sha2::{Digest, Sha256};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::models::agent::{Agent, CreateAgent, UpdateAgent};
@@ -19,6 +20,22 @@ async fn reload_router(state: &SharedState) {
 
 // -- Providers ----------------------------------------------------------------
 
+/// Register a new LLM provider backend.
+#[utoipa::path(
+    post,
+    path = "/admin/providers",
+    tag = "Providers",
+    summary = "Create provider",
+    description = "Register a new LLM provider. The gateway router is reloaded automatically.",
+    request_body(content = CreateProvider, description = "Provider configuration"),
+    responses(
+        (status = 201, description = "Provider created", body = Provider),
+        (status = 400, description = "Validation error", body = GatewayError),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 500, description = "Internal error", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn create_provider(
     State(state): State<SharedState>,
     Json(input): Json<CreateProvider>,
@@ -50,6 +67,19 @@ pub async fn create_provider(
     Ok((StatusCode::CREATED, Json(provider)))
 }
 
+/// List all active providers.
+#[utoipa::path(
+    get,
+    path = "/admin/providers",
+    tag = "Providers",
+    summary = "List providers",
+    description = "Returns all active provider backends ordered by name.",
+    responses(
+        (status = 200, description = "Provider list", body = Vec<Provider>),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn list_providers(
     State(state): State<SharedState>,
 ) -> Result<Json<Vec<Provider>>, GatewayError> {
@@ -63,6 +93,21 @@ pub async fn list_providers(
     Ok(Json(providers))
 }
 
+/// Get a single provider by ID.
+#[utoipa::path(
+    get,
+    path = "/admin/providers/{id}",
+    tag = "Providers",
+    summary = "Get provider",
+    description = "Fetch a provider by its UUID.",
+    params(("id" = Uuid, Path, description = "Provider UUID")),
+    responses(
+        (status = 200, description = "Provider found", body = Provider),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 404, description = "Provider not found", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn get_provider(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
@@ -77,6 +122,22 @@ pub async fn get_provider(
     Ok(Json(provider))
 }
 
+/// Update an existing provider (partial update).
+#[utoipa::path(
+    put,
+    path = "/admin/providers/{id}",
+    tag = "Providers",
+    summary = "Update provider",
+    description = "Partially update a provider. Only supplied fields are changed. Router is reloaded.",
+    params(("id" = Uuid, Path, description = "Provider UUID")),
+    request_body(content = UpdateProvider, description = "Fields to update"),
+    responses(
+        (status = 200, description = "Provider updated", body = Provider),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 404, description = "Provider not found", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn update_provider(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
@@ -121,6 +182,21 @@ pub async fn update_provider(
     Ok(Json(provider))
 }
 
+/// Soft-delete a provider (sets `is_active = false`).
+#[utoipa::path(
+    delete,
+    path = "/admin/providers/{id}",
+    tag = "Providers",
+    summary = "Delete provider",
+    description = "Soft-delete a provider by setting it inactive. Router is reloaded.",
+    params(("id" = Uuid, Path, description = "Provider UUID")),
+    responses(
+        (status = 204, description = "Provider deleted"),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 404, description = "Provider not found", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn delete_provider(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
@@ -142,6 +218,22 @@ pub async fn delete_provider(
 
 // -- Agents -------------------------------------------------------------------
 
+/// Register a new A2A agent.
+#[utoipa::path(
+    post,
+    path = "/admin/agents",
+    tag = "Agents",
+    summary = "Create agent",
+    description = "Register a new A2A agent card. At least one skill is required.",
+    request_body(content = CreateAgent, description = "A2A agent card"),
+    responses(
+        (status = 201, description = "Agent created", body = Agent),
+        (status = 400, description = "Validation error", body = GatewayError),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 500, description = "Internal error", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn create_agent(
     State(state): State<SharedState>,
     Json(input): Json<CreateAgent>,
@@ -183,6 +275,19 @@ pub async fn create_agent(
     Ok((StatusCode::CREATED, Json(agent)))
 }
 
+/// List all active agents.
+#[utoipa::path(
+    get,
+    path = "/admin/agents",
+    tag = "Agents",
+    summary = "List agents",
+    description = "Returns all active A2A agents ordered by name.",
+    responses(
+        (status = 200, description = "Agent list", body = Vec<Agent>),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn list_agents(
     State(state): State<SharedState>,
 ) -> Result<Json<Vec<Agent>>, GatewayError> {
@@ -195,6 +300,21 @@ pub async fn list_agents(
     Ok(Json(agents))
 }
 
+/// Get a single agent by ID.
+#[utoipa::path(
+    get,
+    path = "/admin/agents/{id}",
+    tag = "Agents",
+    summary = "Get agent",
+    description = "Fetch an agent by its UUID.",
+    params(("id" = Uuid, Path, description = "Agent UUID")),
+    responses(
+        (status = 200, description = "Agent found", body = Agent),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 404, description = "Agent not found", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn get_agent(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
@@ -210,6 +330,19 @@ pub async fn get_agent(
 }
 
 /// A2A discovery endpoint — returns the agent card JSON as-is.
+#[utoipa::path(
+    get,
+    path = "/admin/agents/{id}/.well-known/agent-card.json",
+    tag = "Agents",
+    summary = "Get A2A agent card",
+    description = "Returns the full A2A agent card JSON for discovery (per A2A Protocol v1.0 spec).",
+    params(("id" = Uuid, Path, description = "Agent UUID")),
+    responses(
+        (status = 200, description = "Agent card JSON", body = Object),
+        (status = 404, description = "Agent not found", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn get_agent_card(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
@@ -225,6 +358,22 @@ pub async fn get_agent_card(
     Ok(Json(card_json))
 }
 
+/// Update an existing agent (partial update).
+#[utoipa::path(
+    put,
+    path = "/admin/agents/{id}",
+    tag = "Agents",
+    summary = "Update agent",
+    description = "Partially update an agent. Only supplied fields are changed.",
+    params(("id" = Uuid, Path, description = "Agent UUID")),
+    request_body(content = UpdateAgent, description = "Fields to update"),
+    responses(
+        (status = 200, description = "Agent updated", body = Agent),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 404, description = "Agent not found", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn update_agent(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
@@ -268,6 +417,21 @@ pub async fn update_agent(
     Ok(Json(agent))
 }
 
+/// Soft-delete an agent (sets `is_active = false`).
+#[utoipa::path(
+    delete,
+    path = "/admin/agents/{id}",
+    tag = "Agents",
+    summary = "Delete agent",
+    description = "Soft-delete an agent by setting it inactive.",
+    params(("id" = Uuid, Path, description = "Agent UUID")),
+    responses(
+        (status = 204, description = "Agent deleted"),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 404, description = "Agent not found", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn delete_agent(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
@@ -288,13 +452,23 @@ pub async fn delete_agent(
 
 // -- API Keys -----------------------------------------------------------------
 
-#[derive(serde::Deserialize)]
+/// Request body to create a new API key.
+#[derive(serde::Deserialize, ToSchema)]
+#[schema(example = json!({
+    "name": "my-service",
+    "scopes": ["chat", "admin"],
+    "rate_limit_rpm": 120
+}))]
 pub struct CreateApiKey {
+    /// Human-readable key name.
     pub name: String,
+    /// Optional agent ID to scope the key.
     #[serde(default)]
     pub agent_id: Option<Uuid>,
+    /// Permission scopes (defaults to `["chat"]`).
     #[serde(default = "default_scopes")]
     pub scopes: Vec<String>,
+    /// Per-key rate limit in requests per minute (default 60).
     #[serde(default = "default_rate_limit")]
     pub rate_limit_rpm: i32,
 }
@@ -308,6 +482,28 @@ fn default_rate_limit() -> i32 {
 }
 
 /// Generate a new API key. The raw key is returned ONCE — only the hash is stored.
+#[utoipa::path(
+    post,
+    path = "/admin/keys",
+    tag = "API Keys",
+    summary = "Create API key",
+    description = "Generate a new `sk-gw-...` API key. The raw key is returned **once** in the response \
+                   and is never stored — save it immediately.",
+    request_body(content = CreateApiKey, description = "Key configuration"),
+    responses(
+        (status = 201, description = "API key created (raw key included)", body = Object,
+         example = json!({
+             "key": "sk-gw-abc123...",
+             "key_prefix": "sk-gw-abc123",
+             "name": "my-service",
+             "scopes": ["chat"],
+             "warning": "save this key — it will not be shown again"
+         })),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 500, description = "Internal error", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn create_api_key(
     State(state): State<SharedState>,
     Json(input): Json<CreateApiKey>,
@@ -350,6 +546,27 @@ pub async fn create_api_key(
     ))
 }
 
+/// List all API keys (prefix and metadata only — hashes are never exposed).
+#[utoipa::path(
+    get,
+    path = "/admin/keys",
+    tag = "API Keys",
+    summary = "List API keys",
+    description = "Returns all API keys with prefix, name, scopes, and active status. \
+                   The full key is never returned.",
+    responses(
+        (status = 200, description = "API key list", body = Vec<Object>,
+         example = json!([{
+             "id": "550e8400-e29b-41d4-a716-446655440000",
+             "key_prefix": "sk-gw-abc123",
+             "name": "my-service",
+             "scopes": ["chat"],
+             "is_active": true
+         }])),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn list_api_keys(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, GatewayError> {
@@ -376,6 +593,21 @@ pub async fn list_api_keys(
     Ok(Json(serde_json::json!(keys)))
 }
 
+/// Revoke an API key (sets `is_active = false` and invalidates the Redis cache).
+#[utoipa::path(
+    delete,
+    path = "/admin/keys/{id}",
+    tag = "API Keys",
+    summary = "Delete API key",
+    description = "Revoke an API key. The Redis auth cache is invalidated immediately.",
+    params(("id" = Uuid, Path, description = "API key UUID")),
+    responses(
+        (status = 204, description = "API key revoked"),
+        (status = 401, description = "Unauthorized", body = GatewayError),
+        (status = 404, description = "API key not found", body = GatewayError),
+    ),
+    security(("bearer" = []))
+)]
 pub async fn delete_api_key(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
