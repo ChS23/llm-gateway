@@ -5,6 +5,7 @@ use arc_swap::ArcSwap;
 use sqlx::PgPool;
 
 use crate::config::Config;
+use crate::middleware::auth::AuthCache;
 use crate::middleware::telemetry::Metrics;
 use crate::providers::LlmProvider;
 use crate::providers::mock::MockProvider;
@@ -21,6 +22,7 @@ pub struct AppState {
     pub db: PgPool,
     pub health: HealthTracker,
     pub latency: Option<LatencyTracker>,
+    pub auth_cache: AuthCache,
 }
 
 /// DB provider row — all fields needed for routing + cost.

@@ -109,6 +109,7 @@ async fn main() {
         db,
         health: health_tracker,
         latency: latency_tracker,
+        auth_cache: crate::middleware::auth::AuthCache::new(),
     });
 
     // Bootstrap admin API key from env var (if set and not already in DB)
