@@ -65,61 +65,70 @@ fn injection_score(text: &str) -> (f64, Vec<&'static str>) {
         });
     }
 
-    // Signal 2: Special character density (>25% = suspicious)
-    let special_count = text
-        .chars()
-        .filter(|c| !c.is_alphanumeric() && !c.is_whitespace())
-        .count();
-    let density = if text.is_empty() {
-        0.0
-    } else {
-        special_count as f64 / text.len() as f64
-    };
-    if density > 0.25 {
-        score += 20.0;
-        signals.push("high_special_char_density");
-    }
+    // Signals 2-4: single pass over bytes — density, brackets, entropy
+    if !text.is_empty() {
+        let mut freq = [0u32; 256];
+        let mut special_count = 0u32;
+        let mut bracket_count = 0u32;
+        let total = text.len() as u32;
 
-    // Signal 3: Bracket/brace obfuscation (>20 = suspicious)
-    let bracket_count = text
-        .chars()
-        .filter(|c| matches!(c, '{' | '}' | '[' | ']'))
-        .count();
-    if bracket_count > 20 {
-        score += 20.0;
-        signals.push("bracket_obfuscation");
-    }
+        for &byte in text.as_bytes() {
+            freq[byte as usize] += 1;
+            if !byte.is_ascii_alphanumeric() && !byte.is_ascii_whitespace() {
+                special_count += 1;
+            }
+            if matches!(byte, b'{' | b'}' | b'[' | b']') {
+                bracket_count += 1;
+            }
+        }
 
-    // Signal 4: Shannon entropy (>7 bits/char = unusual randomness)
-    let entropy = shannon_entropy(text);
-    if entropy > 7.0 {
-        score += 25.0;
-        signals.push("high_entropy");
+        // Signal 2: Special character density
+        if (special_count as f64 / total as f64) > 0.25 {
+            score += 20.0;
+            signals.push("high_special_char_density");
+        }
+
+        // Signal 3: Bracket obfuscation
+        if bracket_count > 20 {
+            score += 20.0;
+            signals.push("bracket_obfuscation");
+        }
+
+        // Signal 4: Shannon entropy
+        let total_f = total as f64;
+        let entropy: f64 = freq
+            .iter()
+            .filter(|&&c| c > 0)
+            .map(|&c| {
+                let p = c as f64 / total_f;
+                -p * p.log2()
+            })
+            .sum();
+
+        if entropy > 7.0 {
+            score += 25.0;
+            signals.push("high_entropy");
+        }
     }
 
     (score, signals)
 }
 
-/// Shannon entropy of text — measures randomness/information density.
-/// Normal text: 4-5 bits/char. Injection/adversarial: 6-8 bits/char.
+/// Shannon entropy helper (used in tests).
+#[cfg(test)]
 fn shannon_entropy(text: &str) -> f64 {
     if text.is_empty() {
         return 0.0;
     }
-
     let mut freq = [0u32; 256];
-    let mut total = 0u32;
-
-    for &byte in text.as_bytes() {
-        freq[byte as usize] += 1;
-        total += 1;
+    let total = text.len() as f64;
+    for &b in text.as_bytes() {
+        freq[b as usize] += 1;
     }
-
-    let total_f = total as f64;
     freq.iter()
-        .filter(|&&count| count > 0)
-        .map(|&count| {
-            let p = count as f64 / total_f;
+        .filter(|&&c| c > 0)
+        .map(|&c| {
+            let p = c as f64 / total;
             -p * p.log2()
         })
         .sum()
