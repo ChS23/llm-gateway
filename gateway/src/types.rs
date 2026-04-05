@@ -138,6 +138,16 @@ impl GatewayError {
         }
     }
 
+    pub fn not_implemented(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_IMPLEMENTED,
+            error: ErrorBody {
+                message: message.into(),
+                error_type: "not_implemented".into(),
+            },
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

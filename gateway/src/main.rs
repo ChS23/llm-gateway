@@ -56,6 +56,9 @@ use crate::state::AppState;
     ),
     paths(
         routes::chat::chat_completions,
+        routes::responses::create_response,
+        routes::models::list_models,
+        routes::embeddings::create_embeddings,
         routes::health::health,
         routes::health::provider_health,
         routes::admin::create_provider,
@@ -90,6 +93,17 @@ use crate::state::AppState;
             models::agent::CreateAgent,
             models::agent::UpdateAgent,
             routes::admin::CreateApiKey,
+            routes::models::ModelsResponse,
+            routes::models::ModelObject,
+            routes::responses::ResponsesRequest,
+            routes::responses::ResponsesInput,
+            routes::responses::ResponsesMessage,
+            routes::responses::ResponsesResponse,
+            routes::responses::ResponsesOutput,
+            routes::responses::ResponsesContent,
+            routes::responses::ResponsesUsage,
+            routes::embeddings::EmbeddingsRequest,
+            routes::health::HealthResponse,
         )
     ),
     security(
@@ -235,6 +249,12 @@ async fn main() {
     // Authenticated API routes
     let api_routes = Router::new()
         .route("/v1/chat/completions", post(routes::chat::chat_completions))
+        .route("/v1/responses", post(routes::responses::create_response))
+        .route("/v1/models", get(routes::models::list_models))
+        .route(
+            "/v1/embeddings",
+            post(routes::embeddings::create_embeddings),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::guardrails::guardrails_middleware,

@@ -10,7 +10,7 @@ use crate::state::SharedState;
 /// Gateway health status.
 #[derive(serde::Serialize, ToSchema)]
 #[schema(example = json!({"status": "healthy", "postgres": "ok", "redis": "ok", "uptime_secs": 3600}))]
-struct HealthResponse {
+pub struct HealthResponse {
     /// Overall status: `healthy` or `degraded`.
     status: &'static str,
     /// Postgres connectivity: `ok` or `down`.
