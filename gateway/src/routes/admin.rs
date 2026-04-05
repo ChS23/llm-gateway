@@ -380,6 +380,14 @@ pub async fn delete_api_key(
     State(state): State<SharedState>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, GatewayError> {
+    // Get key_hash before deactivating (for cache invalidation)
+    let key_hash: Option<String> =
+        sqlx::query_scalar("SELECT key_hash FROM api_keys WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| GatewayError::internal(e.to_string()))?;
+
     let result = sqlx::query("UPDATE api_keys SET is_active = false WHERE id = $1")
         .bind(id)
         .execute(&state.db)
@@ -388,6 +396,11 @@ pub async fn delete_api_key(
 
     if result.rows_affected() == 0 {
         return Err(GatewayError::not_found("api key not found"));
+    }
+
+    // Invalidate Redis cache immediately (don't wait for TTL)
+    if let Some(hash) = key_hash {
+        crate::middleware::auth::invalidate_key_cache(&state, &hash).await;
     }
 
     Ok(StatusCode::NO_CONTENT)
