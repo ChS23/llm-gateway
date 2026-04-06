@@ -150,17 +150,9 @@ P95 TTFT — 90ms. Memory — 42 MiB под нагрузкой.
 
 ## Как устроено внутри
 
-```mermaid
-flowchart TD
-    C([Client]) --> BL["Body Limit (1MB)"]
-    BL --> A["Auth\nsha256(key) · scope · rate limit"]
-    A --> G["Guardrails\nRegexSet: injection + secrets"]
-    G --> R["Router\nresolve(model) · стратегия"]
-    CB(["Circuit Breaker\n(per provider)"]) -. фильтр .-> R
-    R --> P(["Provider\nOpenAI · Anthropic · Gemini · Mock"])
-    P --> RS["Response\nJSON / SSE proxy · TTFT/TPOT"]
-    RS --> OT[("OTel\nPrometheus · Langfuse")]
-```
+![C4 Context](docs/images/c4-context.svg)
+
+![C4 Container](docs/images/c4-container.svg)
 
 Routing table хранится в `ArcSwap<Router>` — lock-free чтение на горячем пути, атомарная замена при добавлении провайдера через API.
 
