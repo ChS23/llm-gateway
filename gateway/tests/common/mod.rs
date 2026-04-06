@@ -11,21 +11,53 @@ use gateway::config::*;
 use gateway::middleware::auth::AuthCache;
 use gateway::middleware::telemetry::Metrics;
 use gateway::providers::mock::MockProvider;
+use gateway::routes;
 use gateway::routing::health::HealthTracker;
 use gateway::routing::{CostRate, Router as LlmRouter};
 use gateway::state::AppState;
-use gateway::{routes, types};
 
 const PG_URL: &str = "postgres://postgres:postgres@127.0.0.1:5432/llm_gateway_test";
 const ADMIN_KEY: &str = "test-admin-key";
 
-/// Try to build a full test app with Postgres.
+/// Inline mock LLM provider — responds with OpenAI-compatible JSON.
+/// Spawned as a real TCP server on a random port.
+async fn spawn_mock_provider() -> String {
+    use axum::Json;
+
+    async fn handle(Json(req): Json<serde_json::Value>) -> Json<serde_json::Value> {
+        let model = req["model"].as_str().unwrap_or("unknown").to_string();
+        Json(serde_json::json!({
+            "id": "test-mock-1",
+            "object": "chat.completion",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "mock response"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        }))
+    }
+
+    let app = Router::new().route("/v1/chat/completions", post(handle));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+
+    // Give server a moment to bind
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Try to build a full test app with Postgres + in-process mock provider.
 /// Returns None if Postgres is unavailable.
 pub async fn try_build_app() -> Option<TestServer> {
-    // Set env vars for crypto + admin bootstrap
     unsafe {
         std::env::set_var("ADMIN_API_KEY", ADMIN_KEY);
-        std::env::set_var("ENCRYPTION_KEY", "dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleXM="); // 32 bytes base64
+        std::env::set_var("ENCRYPTION_KEY", "dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleXM=");
     }
 
     let db = sqlx::postgres::PgPoolOptions::new()
@@ -36,16 +68,16 @@ pub async fn try_build_app() -> Option<TestServer> {
 
     sqlx::migrate!("../migrations").run(&db).await.ok()?;
 
-    // No-op OTel meter
     let meter = opentelemetry::global::meter("test");
     let metrics = Metrics::new(&meter);
-
     let health = HealthTracker::new(CircuitBreakerConfig::default());
 
-    // Mock provider for testing
+    // Spawn in-process mock provider on random port
+    let mock_url = spawn_mock_provider().await;
+
     let mock = Box::new(MockProvider::new(
         "test-mock".into(),
-        "http://127.0.0.1:19001".into(), // unlikely to be running
+        mock_url,
         vec!["test-model".into()],
     )) as Box<dyn gateway::providers::LlmProvider>;
 
@@ -183,7 +215,6 @@ pub async fn create_key(server: &TestServer, scopes: &[&str]) -> String {
         .to_string()
 }
 
-/// Macro to skip test if infra unavailable.
 #[macro_export]
 macro_rules! require_server {
     () => {
