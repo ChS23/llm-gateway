@@ -4,49 +4,32 @@
 
 ### Middleware Pipeline
 
-```
-                         ┌─────────────────────────────────────────┐
-                         │              LLM Gateway                 │
-                         │                                          │
-Client ──► Body Limit ──► Auth ──────────────────────────────────► │
-              1MB        │ sha256(key)                              │
-                         │ scope check (chat|admin)                 │
-                         │ rate limit (Redis sliding window)        │
-                         │                                          │
-                    ──►  Guardrails ──────────────────────────────► │
-                         │ injection score (4 сигнала)              │
-                         │ secret scan (AWS/GitHub/OpenAI keys)     │
-                         │                                          │
-                    ──►  Router ───────────────────────────────────► Provider
-                         │ resolve(model)                           │
-                         │ health filter (circuit breaker)          │
-                         │ strategy (round-robin/weighted/...)      │
-                         │                                          │
-                         │ ◄── Response ◄──────────────────────────┤
-                         │ output guardrail scan                    │
-                         │ metrics + trace                          │
-                         └─────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    C([Client]) --> BL["Body Limit\n1MB"]
+    BL --> A["Auth\nsha256 · scope\nrate limit"]
+    A --> G["Guardrails\ninput scan"]
+    G --> R["Router\nCB filter · strategy"]
+    R --> P(["Provider"])
+    P --> GO["Guardrails\noutput scan"]
+    GO --> RS(["Response"])
+    RS --> OT[("OTel\nметрики · trace")]
 ```
 
 ### Guardrails — Схема обнаружения инъекций
 
 Кумулятивный scoring (threshold = 40):
 
-```
-Входящий запрос
-      │
-      ├─► RegexSet (6 injection паттернов) ──────── +40 при совпадении
-      │
-      ├─► Плотность спецсимволов (>25% non-alpha) ── +20
-      │
-      ├─► Bracket density (>20 скобок {[]}) ──────── +20
-      │
-      └─► Shannon entropy (>7.0) ──────────────────── +25
-                │
-                ▼
-           Score >= 40?
-           ├── Да: 400 Bad Request {"type": "guardrail_violation"}
-           └── Нет: передать в Router
+```mermaid
+flowchart TD
+    In([Входящий запрос]) --> A & B & C & D
+    A["RegexSet\n6 injection паттернов"] -->|"+40 при совпадении"| S
+    B["Плотность символов\n>25% non-alpha"] -->|"+20"| S
+    C["Bracket density\n>20 скобок"] -->|"+20"| S
+    D["Shannon entropy\n>7.0"] -->|"+25"| S
+    S{score ≥ 40?}
+    S -->|Да| E["400 guardrail_violation"]
+    S -->|Нет| F([Передать в Router])
 ```
 
 ---
