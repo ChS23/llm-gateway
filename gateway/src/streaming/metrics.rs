@@ -9,6 +9,12 @@ pub struct StreamMetrics {
     end: Option<Instant>,
 }
 
+impl Default for StreamMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamMetrics {
     pub fn new() -> Self {
         Self {

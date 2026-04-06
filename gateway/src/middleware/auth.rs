@@ -34,6 +34,12 @@ pub struct AuthCache {
     l1: DashMap<String, L1Entry>,
 }
 
+impl Default for AuthCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuthCache {
     pub fn new() -> Self {
         Self { l1: DashMap::new() }

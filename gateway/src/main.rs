@@ -1,14 +1,3 @@
-mod config;
-mod crypto;
-mod middleware;
-mod models;
-mod providers;
-mod routes;
-mod routing;
-mod state;
-mod streaming;
-mod types;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -22,16 +11,19 @@ use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_scalar::{Scalar, Servable};
 
-use crate::config::{Config, ProviderConfig};
-use crate::middleware::telemetry::{init_metrics, spawn_system_metrics};
-use crate::providers::anthropic::AnthropicProvider;
-use crate::providers::gemini::GeminiProvider;
-use crate::providers::mock::MockProvider;
-use crate::providers::openai::OpenAiProvider;
-use crate::providers::openai_responses::OpenAiResponsesProvider;
-use crate::routes::admin;
-use crate::routing::Router as LlmRouter;
-use crate::state::AppState;
+use gateway::build_provider;
+use gateway::config::Config;
+use gateway::middleware::telemetry::{init_metrics, spawn_system_metrics};
+use gateway::routing::Router as LlmRouter;
+use gateway::state::AppState;
+
+// Re-import library modules so utoipa macros resolve unqualified paths like
+// `routes::chat::chat_completions`, `types::ChatRequest`, `models::provider::Provider`.
+use gateway::models;
+use gateway::routes;
+use gateway::types;
+
+use routes::admin;
 
 #[derive(OpenApi)]
 #[openapi(
@@ -177,13 +169,14 @@ async fn main() {
         let redis = fred::prelude::Client::new(redis_config, None, None, None);
         redis.init().await.expect("failed to connect to Redis");
         tracing::info!("redis connected");
-        Some(crate::routing::latency::LatencyTracker::new(redis))
+        Some(gateway::routing::latency::LatencyTracker::new(redis))
     } else {
         tracing::info!("redis not configured, latency routing disabled");
         None
     };
 
-    let health_tracker = crate::routing::health::HealthTracker::new(config.circuit_breaker.clone());
+    let health_tracker =
+        gateway::routing::health::HealthTracker::new(config.circuit_breaker.clone());
 
     // Build initial router from TOML config
     let providers = build_providers(&config);
@@ -210,7 +203,7 @@ async fn main() {
         db,
         health: health_tracker,
         latency: latency_tracker,
-        auth_cache: crate::middleware::auth::AuthCache::new(),
+        auth_cache: gateway::middleware::auth::AuthCache::new(),
     });
 
     // Bootstrap admin API key from env var (if set and not already in DB)
@@ -258,11 +251,11 @@ async fn main() {
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            crate::middleware::guardrails::guardrails_middleware,
+            gateway::middleware::guardrails::guardrails_middleware,
         ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            crate::middleware::auth::auth_middleware,
+            gateway::middleware::auth::auth_middleware,
         ));
 
     // Admin routes (auth required — bootstrap via ADMIN_API_KEY env var)
@@ -286,7 +279,7 @@ async fn main() {
         .route("/admin/keys/{id}", delete(admin::delete_api_key))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            crate::middleware::auth::auth_middleware,
+            gateway::middleware::auth::auth_middleware,
         ));
 
     let app = Router::new()
@@ -347,14 +340,14 @@ fn build_weights(config: &Config) -> std::collections::HashMap<String, u32> {
         .collect()
 }
 
-fn build_costs(config: &Config) -> std::collections::HashMap<String, crate::routing::CostRate> {
+fn build_costs(config: &Config) -> std::collections::HashMap<String, gateway::routing::CostRate> {
     config
         .providers
         .iter()
         .map(|p| {
             (
                 p.name.clone(),
-                crate::routing::CostRate {
+                gateway::routing::CostRate {
                     input: p.cost_per_input_token.unwrap_or(0.0),
                     output: p.cost_per_output_token.unwrap_or(0.0),
                 },
@@ -363,61 +356,10 @@ fn build_costs(config: &Config) -> std::collections::HashMap<String, crate::rout
         .collect()
 }
 
-fn build_providers(config: &Config) -> Vec<Box<dyn providers::LlmProvider>> {
+fn build_providers(config: &Config) -> Vec<Box<dyn gateway::providers::LlmProvider>> {
     config
         .providers
         .iter()
         .filter_map(|p| build_provider(p))
         .collect()
-}
-
-/// Build a single LlmProvider from config. Public for reuse in state.rs hot reload.
-pub fn build_provider(p: &ProviderConfig) -> Option<Box<dyn providers::LlmProvider>> {
-    match p.provider_type.as_str() {
-        "mock" => Some(Box::new(MockProvider::new(
-            p.name.clone(),
-            p.base_url.clone(),
-            p.models.clone(),
-        ))),
-        "openai" => {
-            let api_key = p.api_key.as_ref()?;
-            Some(Box::new(OpenAiProvider::new(
-                p.name.clone(),
-                p.base_url.clone(),
-                api_key.clone(),
-                p.models.clone(),
-            )))
-        }
-        "anthropic" => {
-            let api_key = p.api_key.as_ref()?;
-            Some(Box::new(AnthropicProvider::new(
-                p.name.clone(),
-                p.base_url.clone(),
-                api_key.clone(),
-                p.models.clone(),
-            )))
-        }
-        "openai-responses" => {
-            let api_key = p.api_key.as_ref()?;
-            Some(Box::new(OpenAiResponsesProvider::new(
-                p.name.clone(),
-                p.base_url.clone(),
-                api_key.clone(),
-                p.models.clone(),
-            )))
-        }
-        "gemini" => {
-            let api_key = p.api_key.as_ref()?;
-            Some(Box::new(GeminiProvider::new(
-                p.name.clone(),
-                p.base_url.clone(),
-                api_key.clone(),
-                p.models.clone(),
-            )))
-        }
-        other => {
-            tracing::warn!(provider_type = %other, "unknown provider type, skipping");
-            None
-        }
-    }
 }
