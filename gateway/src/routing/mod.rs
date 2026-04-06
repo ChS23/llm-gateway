@@ -238,6 +238,10 @@ impl Router {
         models.sort_unstable();
         models
     }
+
+    pub fn provider_names(&self) -> Vec<&str> {
+        self.providers.iter().map(|p| p.name()).collect()
+    }
 }
 
 #[cfg(test)]

@@ -72,6 +72,8 @@ type = "mock"
 base_url = "http://${MOCK1_HOST:-mock-provider-1}:9001"
 models = ["mock-gpt", "mock-fast"]
 weight = 3
+cost_per_input_token = 0.000001
+cost_per_output_token = 0.000002
 
 [[providers]]
 name = "mock-replica-2"
@@ -79,6 +81,8 @@ type = "mock"
 base_url = "http://${MOCK2_HOST:-mock-provider-2}:9002"
 models = ["mock-gpt", "mock-slow"]
 weight = 1
+cost_per_input_token = 0.000001
+cost_per_output_token = 0.000002
 
 [[providers]]
 name = "mock-replica-3"
@@ -86,3 +90,5 @@ type = "mock"
 base_url = "http://${MOCK3_HOST:-mock-provider-3}:9003"
 models = ["mock-gpt"]
 weight = 1
+cost_per_input_token = 0.000001
+cost_per_output_token = 0.000002

@@ -135,7 +135,7 @@ async fn main() {
 
     // Init OTel metrics + traces, then set up tracing subscriber with OTel layer
     let metrics = init_metrics(&config.telemetry);
-    spawn_system_metrics(metrics.clone());
+    // spawn_system_metrics called after state is built (needs SharedState for provider health)
 
     let otel_layer = tracing_opentelemetry::layer()
         .with_tracer(opentelemetry::global::tracer("llm-gateway"))
@@ -239,6 +239,9 @@ async fn main() {
     if let Err(e) = state.reload_router().await {
         tracing::warn!(error = %e, "initial router reload from DB failed, using TOML config");
     }
+
+    // Background metrics: CPU, memory, provider health
+    spawn_system_metrics(state.clone());
 
     // Authenticated API routes
     let api_routes = Router::new()

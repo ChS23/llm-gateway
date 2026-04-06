@@ -134,26 +134,38 @@ llm-gateway/
 └── Dockerfile             # Multi-stage (gateway, mock-provider, loadtest)
 ```
 
-## Документация
+## Документация по уровням
 
-- [Архитектура](docs/architecture.md) — диаграммы, компоненты, design decisions
-- [API](docs/api.md) — описание всех endpoints с примерами
-- [Развёртывание](docs/deployment.md) — инструкции по запуску
+| Уровень | Баллы | Документ |
+|---------|-------|----------|
+| Уровень 1 — Gateway, балансировщик, мониторинг | 10 | [docs/level1.md](docs/level1.md) |
+| Уровень 2 — Реестры агентов, умная маршрутизация | 20 | [docs/level2.md](docs/level2.md) |
+| Уровень 3 — Guardrails, авторизация, нагрузочные тесты | 25 | [docs/level3.md](docs/level3.md) |
+
+Каждый документ содержит: архитектурные диаграммы, описание API, инструкции по запуску, отчёты о тестировании.
+
+## Дополнительно
+
+- [Архитектура](docs/architecture.md) — C4 диаграммы, компоненты, design decisions
+- [API](docs/api.md) — полное описание всех endpoints
+- [Развёртывание](docs/deployment.md) — варианты запуска
 - [Нагрузочные тесты](docs/loadtest-report.md) — результаты и анализ
-- [Стратегии балансировки](docs/balancing-report.md) — сравнение стратегий
+- [Стратегии балансировки](docs/balancing-report.md) — сравнение 5 стратегий
 
 ## Тесты
 
 ```bash
-cargo test --workspace      # 37 unit тестов
+cargo test --workspace      # 89 тестов (68 unit + 21 integration)
 cargo run --release -p loadtest  # Нагрузочные тесты
 ```
 
 | Компонент | Тестов | Покрытие |
 |-----------|--------|----------|
-| Config | 4 | env vars, parsing, defaults |
+| Config | 10 | env vars, parsing, defaults, crypto |
 | Types | 9 | serialization, error builders |
 | Routing | 8 | round-robin, weighted, cost, failover |
 | Health Tracker | 7 | circuit breaker state machine |
-| Guardrails | 7 | injection, secrets, unicode |
+| Guardrails | 10 | injection, secrets, unicode, entropy |
 | Stream Metrics | 4 | TTFT/TPOT, finalize |
+| Auth | 4 | L1 cache hit/miss/TTL |
+| Integration | 21 | agents, auth, chat, models, health, keys, providers |

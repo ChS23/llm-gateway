@@ -1,0 +1,25 @@
+@startuml c4-context
+!include <C4/C4_Context>
+
+LAYOUT_WITH_LEGEND()
+
+title C4 Level 1 — System Context: LLM Gateway
+
+Person(dev, "Разработчик / AI-агент", "Отправляет запросы на генерацию\nтекста через унифицированный API")
+Person(ops, "Оператор платформы", "Управляет провайдерами,\nAPI-ключами и реестром агентов")
+
+System(gateway, "LLM Gateway", "Принимает OpenAI-совместимые запросы,\nбалансирует нагрузку между LLM-провайдерами,\nприменяет guardrails и авторизацию,\nведёт реестр A2A-агентов.")
+
+System_Ext(openai, "OpenAI", "Коммерческий LLM провайдер.\nModels: GPT-4o, GPT-4o-mini.")
+System_Ext(anthropic, "Anthropic", "Коммерческий LLM провайдер.\nModels: Claude Sonnet.")
+System_Ext(gemini, "Google Gemini", "Коммерческий LLM провайдер.\nModels: Gemini 2.5 Flash.")
+System_Ext(langfuse, "Langfuse", "Платформа наблюдаемости для LLM.\nХранит трейсы запросов и ответов.")
+
+Rel(dev, gateway, "Отправляет запросы к LLM")
+Rel(ops, gateway, "Конфигурирует платформу")
+Rel(gateway, openai, "Проксирует запросы")
+Rel(gateway, anthropic, "Проксирует запросы")
+Rel(gateway, gemini, "Проксирует запросы")
+Rel(gateway, langfuse, "Отправляет трейсы")
+
+@enduml

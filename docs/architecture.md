@@ -1,6 +1,14 @@
 # Архитектура
 
-## Общая схема
+## C4 Level 1 — System Context
+
+![C4 Context](images/c4-context.svg)
+
+## C4 Level 2 — Container Diagram
+
+![C4 Container](images/c4-container.svg)
+
+## Общая схема (компонентная)
 
 ![Архитектура](images/architecture.svg)
 

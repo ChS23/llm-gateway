@@ -1,13 +1,14 @@
-use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter, UpDownCounter};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
 use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::{MetricExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
+use opentelemetry_sdk::metrics::{
+    Aggregation, Instrument, PeriodicReader, SdkMeterProvider, Stream,
+};
 
 use crate::config::TelemetryConfig;
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct Metrics {
     pub requests_total: Counter<u64>,
     pub request_duration: Histogram<f64>,
@@ -15,7 +16,7 @@ pub struct Metrics {
     pub tpot: Histogram<f64>,
     pub token_usage: Counter<u64>,
     pub request_cost: Counter<f64>,
-    pub provider_healthy: UpDownCounter<i64>,
+    pub provider_healthy: Gauge<i64>,
     pub cpu_usage: Gauge<f64>,
     pub memory_usage: Gauge<u64>,
 }
@@ -52,8 +53,8 @@ impl Metrics {
                 .with_unit("USD")
                 .build(),
             provider_healthy: meter
-                .i64_up_down_counter("llm_gateway.provider.healthy")
-                .with_description("Provider health status (1 = healthy, -1 = unhealthy)")
+                .i64_gauge("llm_gateway.provider.healthy")
+                .with_description("Provider health: 1 = healthy, 0 = unhealthy")
                 .build(),
             cpu_usage: meter
                 .f64_gauge("process.cpu.utilization")
@@ -107,6 +108,13 @@ impl Metrics {
         let attrs = [KeyValue::new("model", model.to_owned())];
         self.request_cost.add(cost, &attrs);
     }
+
+    pub fn record_provider_health(&self, provider: &str, healthy: bool) {
+        self.provider_healthy.record(
+            if healthy { 1 } else { 0 },
+            &[KeyValue::new("provider", provider.to_owned())],
+        );
+    }
 }
 
 pub fn init_metrics(config: &TelemetryConfig) -> Metrics {
@@ -125,9 +133,39 @@ pub fn init_metrics(config: &TelemetryConfig) -> Metrics {
         .with_interval(std::time::Duration::from_secs(10))
         .build();
 
+    // Fine-grained buckets for LLM latency metrics (seconds)
+    // Default OTel buckets [0,5,10,25...] are too coarse for sub-second values
+    let ttft_buckets = vec![0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];
+    let tpot_buckets = vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0];
+
     let meter_provider = SdkMeterProvider::builder()
         .with_resource(resource.clone())
         .with_reader(reader)
+        .with_view(move |inst: &Instrument| {
+            if inst.name() == "gen_ai.server.time_to_first_token" {
+                return Some(
+                    Stream::builder()
+                        .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                            boundaries: ttft_buckets.clone(),
+                            record_min_max: true,
+                        })
+                        .build()
+                        .unwrap(),
+                );
+            }
+            if inst.name() == "gen_ai.server.time_per_output_token" {
+                return Some(
+                    Stream::builder()
+                        .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                            boundaries: tpot_buckets.clone(),
+                            record_min_max: true,
+                        })
+                        .build()
+                        .unwrap(),
+                );
+            }
+            None
+        })
         .build();
 
     global::set_meter_provider(meter_provider);
@@ -151,24 +189,36 @@ pub fn init_metrics(config: &TelemetryConfig) -> Metrics {
     Metrics::new(&meter)
 }
 
-/// Background task that samples process CPU and memory every 10 seconds.
-pub fn spawn_system_metrics(metrics: Metrics) {
+/// Background task: samples CPU/memory every 10s and records provider health every 15s.
+pub fn spawn_system_metrics(state: crate::state::SharedState) {
     tokio::spawn(async move {
         use std::time::Duration;
         use sysinfo::{Pid, System};
 
         let pid = Pid::from_u32(std::process::id());
         let mut sys = System::new();
+        sys.refresh_cpu_all();
+        let num_cpus = sys.cpus().len().max(1) as f64;
+        let mut health_tick: u32 = 0;
 
         loop {
             sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
 
             if let Some(process) = sys.process(pid) {
-                let cpu = process.cpu_usage() as f64 / 100.0;
+                let cpu = process.cpu_usage() as f64 / 100.0 / num_cpus;
                 let mem = process.memory();
+                state.metrics.cpu_usage.record(cpu, &[]);
+                state.metrics.memory_usage.record(mem, &[]);
+            }
 
-                metrics.cpu_usage.record(cpu, &[]);
-                metrics.memory_usage.record(mem, &[]);
+            // Record provider health every ~15s (every 1.5 ticks)
+            health_tick += 1;
+            if health_tick.is_multiple_of(2) {
+                let router = state.router();
+                for name in router.provider_names() {
+                    let healthy = state.health.is_available(name);
+                    state.metrics.record_provider_health(name, healthy);
+                }
             }
 
             tokio::time::sleep(Duration::from_secs(10)).await;

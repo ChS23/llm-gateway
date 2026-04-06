@@ -1,0 +1,43 @@
+@startuml c4-container
+!include <C4/C4_Container>
+
+LAYOUT_WITH_LEGEND()
+
+title C4 Level 2 — Container Diagram: LLM Gateway
+
+Person(dev, "Разработчик / AI-агент")
+Person(ops, "Оператор платформы")
+
+System_Boundary(sys, "LLM Gateway Platform") {
+    Container(gw, "Gateway", "Rust, axum", "Принимает запросы, применяет\nauth и guardrails, выбирает\nпровайдера по стратегии маршрутизации,\nпроксирует ответ клиенту.")
+
+    Container(mock, "Mock LLM Provider", "Rust", "Имитирует LLM API для тестирования.\nНастраиваемая латентность и error rate.\nЗапускается в нескольких репликах.")
+
+    ContainerDb(pg, "PostgreSQL", "Реляционная БД", "Хранит провайдеров,\nA2A агентов и API-ключи.")
+
+    ContainerDb(redis, "Redis", "In-memory хранилище", "EMA латентности провайдеров\nдля latency-based routing.\nСкользящее окно для rate limiting.")
+
+    Container(otel, "OTel Collector", "opentelemetry-collector-contrib", "Принимает метрики и трейсы\nпо OTLP. Маршрутизирует\nв Prometheus и Langfuse.")
+
+    Container(prom, "Prometheus", "Time-series БД", "Агрегирует метрики платформы:\nRPS, latency, token usage, cost, CPU.")
+
+    Container(grafana, "Grafana", "Инструмент визуализации", "Дашборды на основе Prometheus:\nRPS, TTFT/TPOT, стоимость,\nздоровье провайдеров.")
+}
+
+System_Ext(llm_ext, "LLM Провайдеры\n(OpenAI, Anthropic, Gemini)", "Внешние коммерческие API\nдля генерации текста.")
+System_Ext(langfuse, "Langfuse", "Хранит трейсы LLM запросов\nс input/output и метриками.")
+
+Rel(dev, gw, "POST /v1/chat/completions", "HTTP/SSE")
+Rel(ops, gw, "CRUD /admin/*", "HTTP")
+
+Rel(gw, mock, "Проксирует тестовые запросы", "HTTP")
+Rel(gw, llm_ext, "Проксирует запросы", "HTTPS")
+Rel(gw, pg, "Читает/пишет провайдеров, агентов, ключи", "TCP")
+Rel(gw, redis, "Rate limiting, latency EMA", "TCP")
+Rel(gw, otel, "Метрики и трейсы", "OTLP gRPC")
+
+Rel(otel, prom, "Экспортирует метрики", "HTTP")
+Rel(otel, langfuse, "Экспортирует трейсы", "OTLP/HTTP")
+Rel(prom, grafana, "PromQL запросы", "HTTP")
+
+@enduml

@@ -60,7 +60,7 @@ data: [DONE]
 
 ## Provider Registry
 
-Admin endpoints — без аутентификации (для оператора).
+Admin endpoints — требуют `Authorization: Bearer sk-gw-...` с scope `admin`.
 
 ### POST /admin/providers
 
@@ -167,4 +167,21 @@ Scopes:
 
 ### GET /health
 
-Возвращает `ok` (plain text). Без аутентификации.
+Без аутентификации. Возвращает JSON со статусом всех зависимостей.
+
+```json
+{"status": "healthy", "postgres": "ok", "redis": "ok", "uptime_secs": 120}
+```
+
+### GET /health/providers
+
+Без аутентификации. Circuit breaker состояние каждого провайдера.
+
+```json
+{
+  "mock-replica-1": "healthy",
+  "mock-replica-2": "healthy",
+  "mock-replica-3": "circuit_open",
+  "openai": "half_open"
+}
+```

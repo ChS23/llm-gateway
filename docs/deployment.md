@@ -9,25 +9,29 @@
 
 ## Варианты запуска
 
-### Production — всё в Docker
+### Production — всё в Docker (Linux, host network)
 
 ```bash
 cp .env.example .env
 # Заполнить OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY (опционально)
-# Заполнить LANGFUSE_AUTH (опционально)
+# Заполнить LANGFUSE_AUTH (base64 "pk-lf-...:sk-lf-...") для Langfuse трейсинга
 
 docker compose up -d
 ```
 
+`COMPOSE_FILE=compose.yml:compose.host.yml` прописан в `.env` — все сервисы
+используют host network, порты доступны напрямую на `127.0.0.1`.
+
 Сервисы:
-- `llm-gateway` — :8080
-- `mock-provider-1` — :9001 (latency 50ms)
-- `mock-provider-2` — :9002 (latency 100ms)
-- `mock-provider-3` — :9003 (latency 200ms)
-- `llm-gateway-postgres` — :5432
-- `llm-gateway-redis` — :6379
-- `llm-gateway-otel` — :4317 (OTLP gRPC), :8889 (Prometheus)
-- `llm-gateway-prometheus` — :9090
+- Gateway — http://localhost:8080
+- Grafana — http://localhost:3000 (admin/admin)
+- Prometheus — http://localhost:9090
+- OTel Collector — :4317 (OTLP gRPC), :4318 (HTTP), :8889 (Prometheus metrics)
+- mock-provider-1 — :9001 (latency 50ms)
+- mock-provider-2 — :9002 (latency 100ms)
+- mock-provider-3 — :9003 (latency 200ms)
+- PostgreSQL — :5432
+- Redis — :6379
 - `llm-gateway-grafana` — :3000 (admin/admin)
 
 ### Development — infra в Docker, gateway локально
