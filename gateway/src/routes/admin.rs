@@ -42,17 +42,31 @@ pub async fn create_provider(
 ) -> Result<impl IntoResponse, GatewayError> {
     let models_json = serde_json::to_value(&input.models).unwrap();
 
+    // Encrypt provider API key if provided
+    let encrypted_key: Option<Vec<u8>> = input
+        .api_key
+        .as_deref()
+        .and_then(|k| if k.is_empty() { None } else { Some(k) })
+        .and_then(|key| {
+            crate::crypto::encrypt(key).or_else(|| {
+                tracing::warn!("ENCRYPTION_KEY not set, provider API key will not be stored");
+                None
+            })
+        });
+
     let provider = sqlx::query_as::<_, Provider>(
         r#"
-        INSERT INTO providers (name, provider_type, base_url, models, cost_per_input_token,
-                               cost_per_output_token, rate_limit_rpm, priority, weight)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO providers (name, provider_type, base_url, api_key_encrypted, models,
+                               cost_per_input_token, cost_per_output_token, rate_limit_rpm,
+                               priority, weight)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING *
         "#,
     )
     .bind(&input.name)
     .bind(&input.provider_type)
     .bind(&input.base_url)
+    .bind(&encrypted_key)
     .bind(&models_json)
     .bind(input.cost_per_input_token)
     .bind(input.cost_per_output_token)

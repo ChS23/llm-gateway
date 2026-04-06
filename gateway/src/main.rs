@@ -1,4 +1,5 @@
 mod config;
+mod crypto;
 mod middleware;
 mod models;
 mod providers;

@@ -31,6 +31,7 @@ struct DbProvider {
     name: String,
     provider_type: String,
     base_url: String,
+    api_key_encrypted: Option<Vec<u8>>,
     models: serde_json::Value,
     weight: Option<i32>,
     cost_per_input_token: Option<f64>,
@@ -40,7 +41,7 @@ struct DbProvider {
 impl AppState {
     pub async fn reload_router(&self) -> Result<(), String> {
         let db_providers = sqlx::query_as::<_, DbProvider>(
-            "SELECT name, provider_type, base_url, models, weight, \
+            "SELECT name, provider_type, base_url, api_key_encrypted, models, weight, \
              cost_per_input_token, cost_per_output_token \
              FROM providers WHERE is_active = true",
         )
@@ -56,24 +57,68 @@ impl AppState {
             let models: Vec<String> =
                 serde_json::from_value(row.models.clone()).unwrap_or_default();
 
-            match row.provider_type.as_str() {
-                "mock" => {
-                    providers.push(Box::new(MockProvider::new(
+            // Decrypt API key if encrypted
+            let api_key = row
+                .api_key_encrypted
+                .as_deref()
+                .and_then(crate::crypto::decrypt);
+
+            let provider: Option<Box<dyn LlmProvider>> = match row.provider_type.as_str() {
+                "mock" => Some(Box::new(MockProvider::new(
+                    row.name.clone(),
+                    row.base_url.clone(),
+                    models.clone(),
+                ))),
+                "openai" => api_key.as_ref().map(|key| {
+                    Box::new(crate::providers::openai::OpenAiProvider::new(
                         row.name.clone(),
                         row.base_url.clone(),
-                        models,
-                    )));
-                }
+                        key.clone(),
+                        models.clone(),
+                    )) as Box<dyn LlmProvider>
+                }),
+                "anthropic" => api_key.as_ref().map(|key| {
+                    Box::new(crate::providers::anthropic::AnthropicProvider::new(
+                        row.name.clone(),
+                        row.base_url.clone(),
+                        key.clone(),
+                        models.clone(),
+                    )) as Box<dyn LlmProvider>
+                }),
+                "gemini" => api_key.as_ref().map(|key| {
+                    Box::new(crate::providers::gemini::GeminiProvider::new(
+                        row.name.clone(),
+                        row.base_url.clone(),
+                        key.clone(),
+                        models.clone(),
+                    )) as Box<dyn LlmProvider>
+                }),
+                "openai-responses" => api_key.as_ref().map(|key| {
+                    Box::new(
+                        crate::providers::openai_responses::OpenAiResponsesProvider::new(
+                            row.name.clone(),
+                            row.base_url.clone(),
+                            key.clone(),
+                            models.clone(),
+                        ),
+                    ) as Box<dyn LlmProvider>
+                }),
                 other => {
-                    tracing::warn!(
-                        provider_type = %other,
-                        name = %row.name,
-                        "skipping DB provider: non-mock providers require API keys configured \
-                         in gateway.toml (not stored in DB for security)"
-                    );
-                    continue;
+                    tracing::warn!(provider_type = %other, name = %row.name, "unknown provider type");
+                    None
                 }
-            }
+            };
+
+            let Some(provider) = provider else {
+                if !matches!(row.provider_type.as_str(), "mock") && api_key.is_none() {
+                    tracing::warn!(
+                        name = %row.name,
+                        "skipping DB provider: no encrypted API key (set ENCRYPTION_KEY env var)"
+                    );
+                }
+                continue;
+            };
+            providers.push(provider);
 
             weights.insert(row.name.clone(), row.weight.unwrap_or(1) as u32);
             costs.insert(

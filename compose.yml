@@ -11,6 +11,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
     volumes:
       - ./config/gateway.toml:/etc/gateway/gateway.toml:ro
     ports:
