@@ -87,3 +87,55 @@ pub struct UpdateAgent {
     pub security: Option<serde_json::Value>,
     pub is_active: Option<bool>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_agent_deserialization() {
+        let json = r#"{
+            "name": "code-review-agent",
+            "description": "Reviews pull requests",
+            "url": "https://agent.example.com",
+            "version": "2.0.0",
+            "provider": {"organization": "acme"},
+            "capabilities": {"streaming": true, "pushNotifications": false},
+            "default_input_modes": ["text", "image"],
+            "default_output_modes": ["text"],
+            "skills": [
+                {"id": "review", "name": "Code Review", "description": "Reviews code"},
+                {"id": "summarize", "name": "Summarize", "description": "Summarizes PRs"}
+            ],
+            "security": [{"type": "bearer"}]
+        }"#;
+
+        let agent: CreateAgent = serde_json::from_str(json).unwrap();
+        assert_eq!(agent.name, "code-review-agent");
+        assert_eq!(agent.description, "Reviews pull requests");
+        assert_eq!(agent.url, "https://agent.example.com");
+        assert_eq!(agent.version, "2.0.0");
+        assert_eq!(agent.skills.len(), 2);
+        assert_eq!(agent.skills[0]["id"], "review");
+        assert_eq!(agent.skills[1]["name"], "Summarize");
+        assert_eq!(agent.default_input_modes, vec!["text", "image"]);
+        assert_eq!(agent.default_output_modes, vec!["text"]);
+        assert!(agent.capabilities["streaming"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_create_agent_defaults() {
+        let json = r#"{
+            "name": "minimal-agent",
+            "description": "Minimal",
+            "url": "https://agent.example.com",
+            "skills": []
+        }"#;
+
+        let agent: CreateAgent = serde_json::from_str(json).unwrap();
+        assert_eq!(agent.version, "1.0.0");
+        assert_eq!(agent.default_input_modes, vec!["text"]);
+        assert_eq!(agent.default_output_modes, vec!["text"]);
+        assert!(agent.skills.is_empty());
+    }
+}

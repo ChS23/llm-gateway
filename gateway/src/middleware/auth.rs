@@ -230,6 +230,86 @@ pub async fn invalidate_key_cache(state: &SharedState, key_hash: &str) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn make_cache() -> AuthCache {
+        AuthCache::new()
+    }
+
+    fn sample_key() -> CachedKey {
+        CachedKey {
+            scopes: vec!["chat".into()],
+            rate_limit_rpm: 100,
+        }
+    }
+
+    #[test]
+    fn test_l1_cache_hit() {
+        let cache = make_cache();
+        let key = sample_key();
+        cache.l1_set("hash1", &key);
+
+        let result = cache.l1_get("hash1");
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.scopes, vec!["chat".to_string()]);
+        assert_eq!(result.rate_limit_rpm, 100);
+    }
+
+    #[test]
+    fn test_l1_cache_miss_after_ttl() {
+        let cache = make_cache();
+        let key = sample_key();
+
+        // Insert with an already-expired timestamp
+        cache.l1.insert(
+            "hash_expired".to_string(),
+            L1Entry {
+                key: key.clone(),
+                expires_at: Instant::now() - Duration::from_secs(1),
+            },
+        );
+
+        let result = cache.l1_get("hash_expired");
+        assert!(result.is_none());
+        // Entry should have been removed
+        assert!(!cache.l1.contains_key("hash_expired"));
+    }
+
+    #[test]
+    fn test_l1_invalidate() {
+        let cache = make_cache();
+        cache.l1_set("hash2", &sample_key());
+        assert!(cache.l1_get("hash2").is_some());
+
+        cache.invalidate("hash2");
+        assert!(cache.l1_get("hash2").is_none());
+    }
+
+    #[test]
+    fn test_l1_set_overwrite() {
+        let cache = make_cache();
+        let key1 = CachedKey {
+            scopes: vec!["chat".into()],
+            rate_limit_rpm: 50,
+        };
+        let key2 = CachedKey {
+            scopes: vec!["admin".into()],
+            rate_limit_rpm: 200,
+        };
+
+        cache.l1_set("hash3", &key1);
+        cache.l1_set("hash3", &key2);
+
+        let result = cache.l1_get("hash3").unwrap();
+        assert_eq!(result.scopes, vec!["admin".to_string()]);
+        assert_eq!(result.rate_limit_rpm, 200);
+    }
+}
+
 fn auth_error(message: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,

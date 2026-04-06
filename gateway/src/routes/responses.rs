@@ -178,3 +178,45 @@ pub async fn create_response(
         usage,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_responses_input_text_deserialization() {
+        let json = r#"{"model":"gpt-4o","input":"What is Rust?"}"#;
+        let req: ResponsesRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.model, "gpt-4o");
+        match req.input {
+            ResponsesInput::Text(ref text) => assert_eq!(text, "What is Rust?"),
+            _ => panic!("expected Text variant"),
+        }
+        assert!(!req.stream);
+    }
+
+    #[test]
+    fn test_responses_input_messages_deserialization() {
+        let json = r#"{
+            "model": "gpt-4o",
+            "input": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hello"}
+            ],
+            "stream": true
+        }"#;
+        let req: ResponsesRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.model, "gpt-4o");
+        assert!(req.stream);
+        match req.input {
+            ResponsesInput::Messages(ref msgs) => {
+                assert_eq!(msgs.len(), 2);
+                assert_eq!(msgs[0].role, "system");
+                assert_eq!(msgs[0].content, "You are helpful.");
+                assert_eq!(msgs[1].role, "user");
+                assert_eq!(msgs[1].content, "Hello");
+            }
+            _ => panic!("expected Messages variant"),
+        }
+    }
+}

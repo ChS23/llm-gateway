@@ -82,6 +82,57 @@ fn default_weight() -> i32 {
     1
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_provider_deserialization() {
+        let json = r#"{
+            "name": "openai-primary",
+            "provider_type": "openai",
+            "base_url": "https://api.openai.com",
+            "api_key": "sk-secret-key",
+            "models": ["gpt-4", "gpt-4o"],
+            "cost_per_input_token": 0.00003,
+            "cost_per_output_token": 0.00006,
+            "rate_limit_rpm": 60,
+            "priority": 1,
+            "weight": 5
+        }"#;
+
+        let provider: CreateProvider = serde_json::from_str(json).unwrap();
+        assert_eq!(provider.name, "openai-primary");
+        assert_eq!(provider.provider_type, "openai");
+        assert_eq!(provider.base_url, "https://api.openai.com");
+        assert_eq!(provider.api_key.as_deref(), Some("sk-secret-key"));
+        assert_eq!(provider.models, vec!["gpt-4", "gpt-4o"]);
+        assert!((provider.cost_per_input_token.unwrap() - 0.00003).abs() < f64::EPSILON);
+        assert!((provider.cost_per_output_token.unwrap() - 0.00006).abs() < f64::EPSILON);
+        assert_eq!(provider.rate_limit_rpm, Some(60));
+        assert_eq!(provider.priority, Some(1));
+        assert_eq!(provider.weight, 5);
+    }
+
+    #[test]
+    fn test_create_provider_defaults() {
+        let json = r#"{
+            "name": "mock",
+            "provider_type": "mock",
+            "base_url": "http://localhost:9000",
+            "models": ["mock-model"]
+        }"#;
+
+        let provider: CreateProvider = serde_json::from_str(json).unwrap();
+        assert!(provider.api_key.is_none());
+        assert!(provider.cost_per_input_token.is_none());
+        assert!(provider.cost_per_output_token.is_none());
+        assert!(provider.rate_limit_rpm.is_none());
+        assert!(provider.priority.is_none());
+        assert_eq!(provider.weight, 1);
+    }
+}
+
 /// Partial update for an existing provider. Only supplied fields are changed.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateProvider {

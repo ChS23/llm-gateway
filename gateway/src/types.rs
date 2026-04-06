@@ -258,6 +258,73 @@ mod tests {
     }
 
     #[test]
+    fn test_gateway_error_not_implemented() {
+        let err = GatewayError::not_implemented("streaming not supported");
+        assert_eq!(err.status, StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(err.error.error_type, "not_implemented");
+        assert_eq!(err.error.message, "streaming not supported");
+    }
+
+    #[test]
+    fn test_gateway_error_internal() {
+        let err = GatewayError::internal("database connection failed");
+        assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(err.error.error_type, "internal_error");
+        assert_eq!(err.error.message, "database connection failed");
+    }
+
+    #[test]
+    fn test_chat_response_deserialization() {
+        let resp = ChatResponse {
+            id: "cmpl-1".into(),
+            object: "chat.completion".into(),
+            model: "gpt-4".into(),
+            choices: vec![Choice {
+                index: 0,
+                message: Some(DeltaMessage {
+                    role: Some("assistant".into()),
+                    content: Some("Hi".into()),
+                }),
+                delta: None,
+                finish_reason: Some("stop".into()),
+            }],
+            usage: Some(Usage {
+                prompt_tokens: 5,
+                completion_tokens: 1,
+                total_tokens: 6,
+            }),
+            extra: serde_json::Map::new(),
+        };
+
+        let json = serde_json::to_string(&resp).unwrap();
+        let deserialized: ChatResponse = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.id, "cmpl-1");
+        assert_eq!(deserialized.object, "chat.completion");
+        assert_eq!(deserialized.model, "gpt-4");
+        assert_eq!(deserialized.choices.len(), 1);
+        assert_eq!(
+            deserialized.choices[0]
+                .message
+                .as_ref()
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("Hi")
+        );
+        assert_eq!(deserialized.usage.as_ref().unwrap().total_tokens, 6);
+    }
+
+    #[test]
+    fn test_usage_deserialization() {
+        let json = r#"{"prompt_tokens":10,"completion_tokens":25,"total_tokens":35}"#;
+        let usage: Usage = serde_json::from_str(json).unwrap();
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 25);
+        assert_eq!(usage.total_tokens, 35);
+    }
+
+    #[test]
     fn test_gateway_error_serialization() {
         let err = GatewayError::bad_request("inv", "msg");
         let json = serde_json::to_string(&err).unwrap();

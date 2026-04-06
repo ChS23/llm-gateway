@@ -439,6 +439,84 @@ mod tests {
         assert!((cost - 0.2).abs() < f64::EPSILON);
     }
 
+    #[tokio::test]
+    async fn test_least_connections_prefers_idle() {
+        let router = Router::new(
+            make_providers(),
+            &HashMap::new(),
+            &HashMap::new(),
+            RoutingStrategy::LeastConnections,
+            make_health(),
+            None,
+        );
+
+        // Simulate 5 in-flight requests on provider "a" (index 0)
+        let idx_a = router.provider_index("a").unwrap();
+        for _ in 0..5 {
+            router.acquire(idx_a);
+        }
+
+        // Least-connections should always pick "b" (0 in-flight)
+        for _ in 0..10 {
+            let name = router.resolve("gpt").await.unwrap().name();
+            assert_eq!(name, "b");
+        }
+
+        // Release all and acquire on "b" instead
+        for _ in 0..5 {
+            router.release(idx_a);
+        }
+        let idx_b = router.provider_index("b").unwrap();
+        router.acquire(idx_b);
+
+        // Now "a" has 0 in-flight, "b" has 1 — should pick "a"
+        let name = router.resolve("gpt").await.unwrap().name();
+        assert_eq!(name, "a");
+    }
+
+    #[tokio::test]
+    async fn test_per_model_counter_independence() {
+        // Create providers where "a" serves "gpt" and "claude",
+        // "b" serves only "gpt"
+        let providers: Vec<Box<dyn LlmProvider>> = vec![
+            Box::new(FakeProvider {
+                name: "a".into(),
+                models: vec!["gpt".into(), "claude".into()],
+            }),
+            Box::new(FakeProvider {
+                name: "b".into(),
+                models: vec!["gpt".into()],
+            }),
+        ];
+
+        let router = Router::new(
+            providers,
+            &HashMap::new(),
+            &HashMap::new(),
+            RoutingStrategy::RoundRobin,
+            make_health(),
+            None,
+        );
+
+        // Advance the "gpt" model counter several times
+        for _ in 0..5 {
+            router.resolve("gpt").await;
+        }
+
+        // The "claude" model counter should still be at 0,
+        // so first resolve should return "a" (the only provider)
+        let claude_provider = router.resolve("claude").await.unwrap().name();
+        assert_eq!(claude_provider, "a");
+
+        // Resolve "gpt" and "claude" again to confirm independence
+        let gpt_name = router.resolve("gpt").await.unwrap().name();
+        let claude_name = router.resolve("claude").await.unwrap().name();
+        // claude only has one provider, always "a"
+        assert_eq!(claude_name, "a");
+        // gpt alternates; after 5 prior resolves (counter=5), next is index 5%2=1 => "b"
+        assert_eq!(gpt_name, "b");
+    }
+
     #[test]
     fn test_cost_default_zero() {
         let router = Router::new(

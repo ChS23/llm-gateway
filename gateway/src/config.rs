@@ -353,6 +353,91 @@ mod tests {
     }
 
     #[test]
+    fn test_routing_strategy_deserialization() {
+        let cases = vec![
+            ("\"round-robin\"", RoutingStrategy::RoundRobin),
+            ("\"weighted\"", RoutingStrategy::Weighted),
+            ("\"latency\"", RoutingStrategy::Latency),
+            ("\"least-connections\"", RoutingStrategy::LeastConnections),
+            ("\"health-aware\"", RoutingStrategy::HealthAware),
+        ];
+        for (json, expected) in cases {
+            let parsed: RoutingStrategy = serde_json::from_str(json).unwrap();
+            assert_eq!(parsed, expected, "failed for {json}");
+        }
+    }
+
+    #[test]
+    fn test_non_empty_deserializer() {
+        // Empty string becomes None
+        let toml_empty = r#"
+[server]
+[telemetry]
+otlp_endpoint = "http://localhost:4317"
+[[providers]]
+name = "p"
+type = "mock"
+base_url = "http://localhost"
+api_key = ""
+models = ["m"]
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(toml_empty.as_bytes()).unwrap();
+        let config = Config::load(tmp.path()).unwrap();
+        assert!(config.providers[0].api_key.is_none());
+
+        // Non-empty string becomes Some
+        let toml_set = r#"
+[server]
+[telemetry]
+otlp_endpoint = "http://localhost:4317"
+[[providers]]
+name = "p"
+type = "mock"
+base_url = "http://localhost"
+api_key = "sk-test"
+models = ["m"]
+"#;
+        let mut tmp2 = tempfile::NamedTempFile::new().unwrap();
+        tmp2.write_all(toml_set.as_bytes()).unwrap();
+        let config2 = Config::load(tmp2.path()).unwrap();
+        assert_eq!(config2.providers[0].api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn test_config_defaults() {
+        let toml_content = r#"
+[server]
+[telemetry]
+otlp_endpoint = "http://localhost:4317"
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(toml_content.as_bytes()).unwrap();
+        let config = Config::load(tmp.path()).unwrap();
+
+        // Server defaults
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.server.port, 8080);
+        // Database defaults (derived Default gives 0; serde default_max_connections
+        // only applies when [database] section is present but field is missing)
+        assert_eq!(config.database.max_connections, 0);
+        // Auth defaults
+        assert_eq!(config.auth.key_prefix, "sk-gw");
+        assert_eq!(config.auth.hash_algorithm, "sha256");
+        // Routing defaults
+        assert_eq!(config.routing.default_strategy, RoutingStrategy::RoundRobin);
+        assert_eq!(config.routing.ttft_timeout_ms, 5000);
+        // Circuit breaker defaults
+        assert_eq!(config.circuit_breaker.failure_threshold, 5);
+        assert_eq!(config.circuit_breaker.cooldown_seconds, 30);
+        assert_eq!(config.circuit_breaker.half_open_max_requests, 3);
+        // Guardrails defaults
+        assert!(config.guardrails.enable_injection_filter);
+        assert!(config.guardrails.enable_secret_scanner);
+        assert_eq!(config.guardrails.max_request_size_bytes, 1_048_576);
+    }
+
+    #[test]
     fn test_load_minimal_config() {
         let toml_content = r#"
 [server]
