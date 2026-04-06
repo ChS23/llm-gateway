@@ -146,7 +146,11 @@ curl -X POST http://localhost:8080/admin/agents \
 curl http://localhost:8080/admin/agents/<id>/.well-known/agent-card.json
 ```
 
-### Langfuse трейсинг
+### Трейсинг через Langfuse (вместо MLflow)
+
+Задание требует MLflow. В качестве альтернативы выбран **Langfuse** — он специализируется именно на LLM-трейсинге и поддерживает OpenTelemetry нативно, что позволило не добавлять отдельный SDK: gateway уже экспортирует OTel spans, OTel Collector пробрасывает их в Langfuse Cloud без изменений в коде.
+
+MLflow ориентирован на эксперименты и модели (experiment tracking, model registry), а не на production-трейсинг инференса. Для задачи «трассировать работу агентов и LLM» Langfuse подходит точнее.
 
 Трейсы уходят автоматически при наличии `LANGFUSE_AUTH` в `.env`:
 
@@ -156,7 +160,7 @@ LANGFUSE_BASEURL=https://cloud.langfuse.com
 LANGFUSE_AUTH=<base64(pk-lf-...:sk-lf-...)>
 ```
 
-Каждый запрос создаёт span с атрибутами:
+Каждый запрос создаёт span с атрибутами по GenAI Semantic Conventions:
 `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.system`,
 `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`,
 `langfuse.observation.input`, `langfuse.observation.output`.
@@ -201,3 +205,7 @@ Circuit breaker обнаруживает недоступный провайде
 По результатам нагрузочных тестов: **1 249 трейсов** зафиксировано,
 mock-fast — 8.28M токенов, mock-gpt — 38.11M токенов.
 Стоимость $0.00 — mock провайдеры без цены за токен.
+
+### Подробный отчёт по стратегиям
+
+Развёрнутое сравнение всех 5 стратегий с анализом overhead и рекомендациями для production: [docs/balancing-report.md](balancing-report.md)

@@ -169,12 +169,41 @@ cargo test --workspace   # 89 тестов, ~0.1s
 
 ---
 
-## Документация по уровням задания
+## Уровни задания
 
-| Уровень | Что реализовано | Документ |
-|---------|----------------|----------|
-| 1 — Gateway + балансировщик + мониторинг | Прокси, SSE, 3 стратегии, OTel + Grafana | [docs/level1.md](docs/level1.md) |
-| 2 — Реестры + умная маршрутизация | A2A Registry, 5 стратегий, circuit breaker, Langfuse | [docs/level2.md](docs/level2.md) |
-| 3 — Guardrails + авторизация + нагрузка | Injection/secret scan, API keys, 89 тестов, 34k RPS | [docs/level3.md](docs/level3.md) |
+### Уровень 1 — Gateway + балансировщик + мониторинг [10 баллов]
 
-Дополнительно: [API](docs/api.md) · [Архитектура](docs/architecture.md) · [Развёртывание](docs/deployment.md) · [Нагрузочные тесты](docs/loadtest-report.md) · [Сравнение стратегий](docs/balancing-report.md)
+- Docker Compose: 9 сервисов — gateway, postgres, redis, otel-collector, prometheus, grafana, 3×mock-provider
+- Провайдеры: OpenAI, Anthropic, Gemini, Mock (настраиваемые latency/error rate)
+- Балансировка: round-robin и weighted по репликам; SSE streaming без буферизации
+- OTel метрики → Prometheus → Grafana: RPS, p50/p95 latency, error rate, CPU, tokens, cost
+- Health-check: `GET /health`, `GET /health/providers` (circuit breaker state)
+
+→ [docs/level1.md](docs/level1.md)
+
+### Уровень 2 — Реестры + умная маршрутизация [20 баллов]
+
+- A2A Agent Registry: CRUD + Agent Card (имя, описание, skills) + discovery endpoint `/.well-known/agent-card.json`
+- Динамическая регистрация провайдеров через API: URL, цена за токен, лимиты, приоритет, hot reload без перезапуска
+- 5 стратегий маршрутизации: round-robin, weighted, **latency-based** (Redis EMA), least-connections, **health-aware**
+- Circuit breaker: временно убирает упавшего провайдера, failover прозрачен для клиента
+- TTFT, TPOT, input/output tokens, стоимость запроса
+- Трейсинг: Langfuse Cloud через OTel (вместо MLflow — [обоснование](docs/level2.md#трейсинг-через-langfuse-вместо-mlflow))
+
+→ [docs/level2.md](docs/level2.md) · [Сравнение стратегий](docs/balancing-report.md)
+
+### Уровень 3 — Guardrails + авторизация + нагрузочные тесты [25 баллов]
+
+- Guardrails: RegexSet single-pass — 6 injection-паттернов + 4 secret-паттерна (AWS, GitHub, OpenAI keys, RSA), input + output scan
+- Авторизация: API-ключи `sk-gw-...`, sha256 в PostgreSQL, scope-based (chat/admin), rate limiting через Redis
+- Нагрузочные тесты: до 34 873 RPS, SSE streaming, failover под нагрузкой, 0% ошибок
+
+→ [docs/level3.md](docs/level3.md) · [Отчёт по нагрузке](docs/loadtest-report.md)
+
+---
+
+## Дополнительно
+
+[API](docs/api.md) · [Архитектура](docs/architecture.md) · [Развёртывание](docs/deployment.md)
+
+OpenAPI UI доступен после запуска: http://localhost:8080/scalar
