@@ -98,10 +98,11 @@ sqlx migrate run --source migrations
 # Health
 curl http://localhost:8080/health
 
-# Создать ключ
+# Создать ключ (bootstrap ключ из ADMIN_API_KEY в .env)
 curl -X POST http://localhost:8080/admin/keys \
+  -H "Authorization: Bearer sk-gw-admin-bootstrap-key" \
   -H "Content-Type: application/json" \
-  -d '{"name": "test"}'
+  -d '{"name": "test", "scopes": ["chat"]}'
 
 # Запрос
 curl http://localhost:8080/v1/chat/completions \
